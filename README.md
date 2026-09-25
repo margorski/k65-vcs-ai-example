@@ -23,6 +23,8 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
    - **skaner** – pozioma linia z playfieldu (kule przelatują przed nią) zjeżdżająca w dół w takt
      utworu: w spokojnych sekcjach i breakdownach 1 przebieg na 2 wzory, w głównych 1 na wzór,
      w build-upach 2 na wzór; na stopie podskakuje w górę, hi-haty i stopy ją rozjaśniają,
+   - **budowanie napięcia**: przez intro (sekwencje 0–7, ~14 s) skaner z piłką stoją u góry
+     (piłka tylko podskakuje na hi-hatach), ruszają, gdy wchodzi bas (`EQ_SCAN_START` w eqsine.k65),
    - **piłeczka (ball)** – "karaoke": jedzie po skanerze w lewo i prawo raz na wzór i podskakuje
      po paraboli na stopie (wysokość zależna od sekcji) oraz lekko na hi-hatach; chowa się za
      kulami; podczas błysku tła jest czarną sylwetką (żeby krawędzie ekranu zostały czyste),

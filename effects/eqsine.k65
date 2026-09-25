@@ -28,7 +28,8 @@
 //    a full-width line sweeping down the helix, its position computed from the
 //    song position (step/tick), so it stays locked to the music:
 //      CALM, BREAK: 1 sweep per 2 patterns (3.5 s), FULL: 1 per pattern (1.76 s),
-//      BUILD: 2 per pattern. Kick -> it hops up (half the kick pump) and glides
+//      BUILD: 2 per pattern (from sequence EQ_SCAN_START; before that it is
+//      parked near the top with the ball on it). Kick -> it hops up (half the kick pump) and glides
 //      back; hats/kicks -> brighter for a moment. Colour = the section's
 //      background hue brightened. It is cut to the background width (8..151):
 //      on its lines COLUBK = black and PF0 lights only pixels 8-15 (+ mirrored).
@@ -64,6 +65,9 @@ bank bank3;
 [ EQ_R0 = 3, EQ_RSTEP = 1.7 ] // helix radius in px = EQ_R0 + level*EQ_RSTEP (level 0..15 -> 3..28)
 [ EQ_SPLIT = 6 ]            // slots 0..SPLIT-1 computed in overscan, the rest in vblank (CPU budget)
 [ M_CALM = 0, M_FULL = 1, M_BREAK = 2, M_BUILD = 3 ]
+[ EQ_SCAN_START = 8 ]       // song sequence where the scanner + ball start moving (intro = parked
+                            //  at the top, building tension; 16 = after the whole first calm part)
+[ EQ_SCAN_PARK = 3 ]        // parked scanner position (orb-line pairs from the top; ball sits above)
 
 // RAM: 80-CF per-effect arrays, E8-EE scratch/state (see _gamedefs.k65)
 var eq_x0[16] = 0x80;       // P0 (front orb) horizontal position per slot
@@ -404,9 +408,13 @@ inline eq_fx_prep {
     } else {
         y?2 =={ a<< a?80 >={ c+ a-80 } }            // fast: 2*q mod 80 (normal: q)
     }
+    tmp2=a a=songpos_seq a?[EQ_SCAN_START] <{ tmp2=a=0 }  // intro: parked (see below)
+    a=tmp2
 
     // kick: scanner hops up by half the kick pump, glides back as it decays
     tmp2=a a=eq_kick a>> tmp3=a a=tmp2 c+ a-tmp3 <{ a=0 }
+    a?[EQ_SCAN_PARK] <{ a=[EQ_SCAN_PARK] }          // never above the park position: smooth start,
+                                                    //  and the ball always has a pair above it
     tmp4=a c- a+1 eq_sd=a                           // tmp4 = p (temp), scanner counter = p+1
 
     // ball pair = p - 1 - hop (hop = kick parabola + hat hop), counter = p - hop
@@ -416,7 +424,7 @@ inline eq_fx_prep {
                                                     // (tmp3 as temp: tmp2 IS eq_sd here!)
     a=EqHopK,y tmp3=a
     y=eq_beat a=EqHatHop,y c- a+tmp3 tmp3=a
-    a=tmp4 c+ a-tmp3 <{ a=0x80 } =={ a=0x80 } eq_bd=a    // above the top -> no ball
+    a=tmp4 c+ a-tmp3 <{ a=1 } =={ a=1 } eq_bd=a     // too high -> it hits the "ceiling" (top pair)
 
     // sparks: M0 starts radius px left of the axis (M1 mirrored), on while radius > 0
     a=[79] c+ a-eq_spk tmp4=a
@@ -433,6 +441,7 @@ inline eq_fx_prep {
     a=songpos_step a<< c- a+songpos_step a<< c- a+songpos_tick tmp3=a    // step*6 + tick
     a=songpos_seq a&1 !={ a=[119] c+ a-tmp3 } else { a=tmp3 c- a+24 }
     tmp3=a
+    a=songpos_seq a?[EQ_SCAN_START] <{ tmp3=a=24 }      // intro: parked at its start position
 
     // colours: scanner = background hue brightened (+ flash), ball = brightest of the hue
     a=eq_beat a>> a>> a&0x0E c- a+EqBgHue,x a|0x08 eq_scol=a
