@@ -10,7 +10,9 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
 - `effects/eqsine.k65` (bank bank3) - music-reactive double helix: 32 orbs from 2 multiplexed sprites;
   section choreography (table from `tools/song_analysis.py`), melody pitch -> bulge position,
   kick -> pump/spin/flash (reads `mus_*` copies of AUDV/AUDF/AUDC written by the player),
-  section-coloured flashing background, playfield scanner line (speed per section, hops on kicks)
+  section-coloured flashing background, playfield scanner line (speed per section, hops on kicks),
+  ball = karaoke ball bouncing on the scanner, M0/M1 = spark bursts on kicks.
+  The eqsine kernel is 228 lines (limit ~229) and slot line 3 is nearly full - always re-run `make check`.
 
 ## Knowledge base - read before editing K65 code
 

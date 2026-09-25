@@ -33,6 +33,21 @@
 //      background hue brightened. It is cut to the background width (8..151):
 //      on its lines COLUBK = black and PF0 lights only pixels 8-15 (+ mirrored).
 //
+//  Ball ("karaoke ball", same colour register as the playfield):
+//    rides on top of the scanner, travels left->right->left once per pattern
+//    and hops: a parabola on every kick (height per section) plus a small hop
+//    on hats (and a second bounce after a kick). On its 2 lines the black PF
+//    frame is switched off (PF0 = 0x02, the same byte written to ENABL turns
+//    the ball on) so COLUPF can carry the ball colour. While the background
+//    flashes the frame stays on and the ball is drawn black (a silhouette),
+//    so the screen edges stay clean. It is behind the orbs.
+//
+//  Sparks (M0/M1, colours = the slot's orb colours):
+//    on a kick a burst flies out of the helix axis to both sides (ease-out
+//    radius, per section), 2-3 lines per slot; per-slot HMM offsets (a random
+//    walk that grows with the burst, applied on each slot's HMOVE) spread it
+//    into a ragged cloud, and a per-slot mask lights ~2/3 of the sparks.
+//
 //  3D: P0 is always the orb in front (P0 has priority over P1): the strands
 //  swap sprites when they pass behind each other, front = brighter + bigger
 //  orb shape, back = darker + smaller. Each strand keeps its own hue.
@@ -62,7 +77,7 @@ var eq_hoff   = 0xEA;       // hue offset (slowly cycling)
 var eq_lvladd = 0xEB;       // per frame: radius base + kick pump (added to every slot level)
 var eq_lumadd = 0xEC;       // per frame: flash luminance (0/2/4) + fade level*16 (EqFadeLum index)
 var eq_th0    = 0xED;       // per frame: angle of slot 0 (phase/4)
-var eq_flvl   = 0xEE;       // fade level * 16
+var eq_sidx   = 0xEE;       // kernel: spark table index (stage*17 + slot + 1), +1 per slot
 var eq_hueofs = 0xEF;       // mode * 32 (palette of the current section in EqHue)
 var eq_mode   = 0xD5;       // current section mode (M_*)
 var eq_base   = 0xD6;       // radius base level 0..15 (smoothed towards EqModeBase)
@@ -102,9 +117,60 @@ data EqBgHue {  0x60            0xB0                0x50                0xC0  }
 // Scanner per section:           CALM   FULL   BREAK  BUILD
 data EqScanSpeed {                 0      1      0      2    }  // 0 = 1 sweep / 2 patterns, 1 = 1 / pattern, 2 = 2 / pattern
 
-// Scanner position 0..79 (16 slots x 5 orb-line pairs) -> slot / orb row (9 7 5 3 1)
-data EqScanSlot { for x=0..79 eval [ floor(x/5) ] }
-data EqScanRow  { for x=0..79 eval [ 9 - 2*(x%5) ] }
+// Kick-driven curves per section, index = mode*32 + eq_kick (kick counts K..0 after a kick,
+// K = EqModeKick: CALM 2, FULL 10, BREAK 16, BUILD 4)
+data EqHopK {                       // ball hop in orb-line pairs: parabola, H = 1 / 5 / 7 / 2
+    align 128
+    for x=0..127 eval [ m = floor(x/32), k = x%32,
+        kk = m==0 ? 2 : (m==1 ? 10 : (m==2 ? 16 : 4)),
+        hh = m==0 ? 1 : (m==1 ? 5 : (m==2 ? 7 : 2)),
+        k==0 ? 0 : (k > kk ? 0 : round(hh*4*(kk-k)*k/(kk*kk))) ]
+}
+data EqSparkR {                     // spark radius in px: ease-out, R = 0 / 56 / 64 / 28
+    align 128
+    for x=0..127 eval [ m = floor(x/32), k = x%32,
+        kk = m==0 ? 2 : (m==1 ? 10 : (m==2 ? 16 : 4)),
+        rr = m==0 ? 0 : (m==1 ? 56 : (m==2 ? 64 : 28)),
+        k==0 ? 0 : (k > kk ? 0 : round(rr*(1 - (k/kk)*(k/kk)))) ]
+}
+data EqHatHop {                     // small hop from eq_beat (hats set 8, kicks 16 -> second bounce)
+    for x=0..16 eval [ x > 8 ? 0 : round(2*4*(8-x)*x/64) ]
+}
+
+// Sparks: 4 stages (burst progress) x 17 entries. High nibble = HMM (per-slot move of a
+// zigzag 0 7 7 -7 -7 -7 -7 7 7 7 7 -7 -7 -7 -7 7 0 px = +-14 px, lightning-like, scaled 0, 1/3,
+// 2/3, 1 by stage -> the burst starts as a line and spreads into jagged bolts). Bit 1 = ENAM for the PREVIOUS slot (entry s+1 is
+// read in slot s, its HMM acts on slot s+1): ~2/3 of the sparks are lit, M0/M1 differ.
+// HMMx ignores bits 0-3 and ENAMx only uses bit 1, so one byte feeds both registers.
+data EqSparkT0 {
+    nocross                         // abs,x in a tight line: no page-crossing cycle
+    0x00 0x02 0x02 0x00 0x02 0x00 0x02 0x02 0x00 0x00 0x02 0x02 0x02 0x02 0x02 0x00 0x00
+    0x00 0xE2 0xE2 0x20 0x22 0x20 0x22 0xE2 0xE0 0xE0 0xE2 0x22 0x22 0x22 0x22 0xE0 0x00
+    0x00 0xB2 0xB2 0x50 0x52 0x50 0x52 0xB2 0xB0 0xB0 0xB2 0x52 0x52 0x52 0x52 0xB0 0x00
+    0x00 0x92 0x92 0x70 0x72 0x70 0x72 0x92 0x90 0x90 0x92 0x72 0x72 0x72 0x72 0x90 0x00
+}
+data EqSparkT1 {
+    nocross
+    0x00 0x02 0x02 0x02 0x02 0x02 0x02 0x02 0x00 0x02 0x00 0x00 0x02 0x02 0x02 0x02 0x00
+    0x00 0x22 0x22 0xE2 0xE2 0xE2 0xE2 0x22 0x20 0x22 0x20 0xE0 0xE2 0xE2 0xE2 0x22 0x00
+    0x00 0x52 0x52 0xB2 0xB2 0xB2 0xB2 0x52 0x50 0x52 0x50 0xB0 0xB2 0xB2 0xB2 0x52 0x00
+    0x00 0x72 0x72 0x92 0x92 0x92 0x92 0x72 0x70 0x72 0x70 0x90 0x92 0x92 0x92 0x72 0x00
+}
+data EqSparkStage {                 // burst progress 0..3, index = mode*32 + eq_kick
+    align 128
+    for x=0..127 eval [ m = floor(x/32), k = x%32,
+        kk = m==0 ? 2 : (m==1 ? 10 : (m==2 ? 16 : 4)),
+        k > kk ? 0 : min(3, floor(4*(1 - k/kk))) ]
+}
+data EqShapeLo { nocross 0 16 }             // orb shape pointer (colour bit0: small / big)
+
+// Ball / sparks / scanner - per frame values in scratch bytes (free during the kernel)
+var eq_sd   = 0xE1;         // tmp2:   scanner pair counter (+1), decremented per orb-line pair
+var eq_bd   = 0xE4;         // ptrC:   ball pair counter (+1)
+var eq_spk  = 0xE5;         // ptrC+1: ENAMx value for the sparks (0/2)
+var eq_scol = 0xE6;         // ptrD:   scanner colour
+var eq_bcol = 0xE7;         // ptrD+1: ball colour
+                            // tmp3 = ball x, tmp4 = spark M0 x (used by the kernel's top lines)
 
 // Melody pitch -> slot 1..14. AUDF values the song really uses on channel 1
 // (5 7 10 13 14 15 17 18 20 21 24 27 29) are spread evenly, others go to the nearest.
@@ -265,8 +331,7 @@ inline eq_music {
     }
     eq_bg=a
     FxFadeLevel a?4 <{ eq_bg=a=0 }                      // black while (mostly) faded out
-    FxFadeLevel a<< a<< a<< a<< eq_flvl=a
-    c- a+tmp2 eq_lumadd=a                               // one add per colour in eq_slot
+    FxFadeLevel a<< a<< a<< a<< c- a+tmp2 eq_lumadd=a                               // one add per colour in eq_slot
 }
 
 
@@ -316,7 +381,7 @@ inline eq_update_top {
 inline eq_update {
     x=[EQ_SPLIT] { eq_slot x++ x?[EQ_SLOTS] }!=
     // fully faded -> black (hue|0 would still be a dark colour)
-    a=eq_flvl =={
+    FxFadeLevel =={
         x=31 { eq_c0,x=a x-- }>=0
     }
 }
@@ -326,10 +391,9 @@ inline eq_update {
 //  Kernel: 16 slots x 14 lines (pos P0, pos P1, HMOVE, 10 orb lines, clear)
 // ---------------------------------------------------------------------------
 
-// Scanner parameters for the kernel (vblank, after eq_update) - in scratch bytes:
-//   ptrC = scanner slot, ptrC+1 = scanner orb row, ptrD = scanner colour
-inline eq_scan_prep {
-    // q = position within the song pattern: step*5 + min(tick,4) = 0..79
+// Scanner + ball + sparks for the kernel (vblank, after eq_update)
+inline eq_fx_prep {
+    // scanner pair p = position within the song pattern: step*5 + min(tick,4) = 0..79
     a=songpos_step a<< a<< c- a+songpos_step tmp2=a
     a=songpos_tick a?5 >={ a=4 } c- a+tmp2 tmp2=a
 
@@ -341,13 +405,38 @@ inline eq_scan_prep {
         y?2 =={ a<< a?80 >={ c+ a-80 } }            // fast: 2*q mod 80 (normal: q)
     }
 
-    // kick: hop up by half the kick pump (FULL ~14 lines, BREAK ~22), glide back as it decays
+    // kick: scanner hops up by half the kick pump, glides back as it decays
     tmp2=a a=eq_kick a>> tmp3=a a=tmp2 c+ a-tmp3 <{ a=0 }
-    y=a a=EqScanSlot,y ptrC=a a=EqScanRow,y ptrC+1=a
+    tmp4=a c- a+1 eq_sd=a                           // tmp4 = p (temp), scanner counter = p+1
 
-    // colour: the section's background hue, brightened (lum 8, +2/+4 flash on kicks/hats)
-    a=eq_beat a>> a>> a&0x0E c- a+EqBgHue,x a|0x08 ptrD=a
-    FxFadeLevel a?7 <{ ptrC=a=0xFF }                // no scanner during fades (slot never matches)
+    // ball pair = p - 1 - hop (hop = kick parabola + hat hop), counter = p - hop
+    a=x a<< a<< a<< a<< a<< c- a+eq_kick y=a        // mode*32 + kick
+    a=EqSparkR,y eq_spk=a                           // spark radius (temp)
+    a=EqSparkStage,y tmp3=a a<< a<< a<< a<< c- a+tmp3 c- a+1 eq_sidx=a   // stage*17 + 1
+                                                    // (tmp3 as temp: tmp2 IS eq_sd here!)
+    a=EqHopK,y tmp3=a
+    y=eq_beat a=EqHatHop,y c- a+tmp3 tmp3=a
+    a=tmp4 c+ a-tmp3 <{ a=0x80 } =={ a=0x80 } eq_bd=a    // above the top -> no ball
+
+    // sparks: M0 starts radius px left of the axis (M1 mirrored), on while radius > 0
+    a=[79] c+ a-eq_spk tmp4=a
+    a=eq_spk !={ a=2 } eq_spk=a
+    a=eq_bg !={                                     // background flashing: keep the black PF frame
+        a=eq_spk a|0x30 eq_spk=a                    //  on the ball lines (bits 4-5 of eq_spk, ENAMx
+        a=0                                         //  ignores them) and draw the ball black
+    } else {
+        a=EqBgHue,x a|0x0E                          // black background: ball in the brightest hue
+    }
+    eq_bcol=a
+
+    // ball x: ping-pong along the pattern, 24..119
+    a=songpos_step a<< c- a+songpos_step a<< c- a+songpos_tick tmp3=a    // step*6 + tick
+    a=songpos_seq a&1 !={ a=[119] c+ a-tmp3 } else { a=tmp3 c- a+24 }
+    tmp3=a
+
+    // colours: scanner = background hue brightened (+ flash), ball = brightest of the hue
+    a=eq_beat a>> a>> a&0x0E c- a+EqBgHue,x a|0x08 eq_scol=a
+    FxFadeLevel a?7 <{ eq_sd=eq_bd=a=0x80 eq_spk=a=0 }   // nothing extra during fades
 }
 
 // A = x position (0..159). One line each; fixed-register versions leave X free,
@@ -370,37 +459,77 @@ inline PosP1 {
         a^7 a<< a<< a<< a<< hp1h=a *2 rp1=a
     }
 }
+inline PosM0 {                                  // missiles and ball land 1 px left of players
+    nocross {
+        c+ wsync
+        { a-15 }>=
+        a^7 a<< a<< a<< a<< hm0h=a *2 rm0=a
+    }
+}
+inline PosM1 {
+    nocross {
+        c+ wsync
+        { a-15 }>=
+        a^7 a<< a<< a<< a<< hm1h=a *2 rm1=a
+    }
+}
+inline PosBL {
+    nocross {
+        c+ wsync
+        { a-15 }>=
+        a^7 a<< a<< a<< a<< hbh=a *2 rb=a
+    }
+}
 // Kernel: 16 slots x 14 lines = 224 lines (picture timer ~229)
 //   slot: pos P0 | pos P1 | HMOVE + colours | 10 orb lines (in pairs, for the scanner) | clear
+// Kernel: 4 setup lines + 16 slots x 14 lines = 228 lines (picture timer ~229)
+//   slot: pos P0 | pos P1 | HMOVE + colours | 10 orb lines (in pairs) | clear
 inline eq_kernel {
     ptrA+1=a=&>EqOrbs ptrB+1=a                  // (the music player uses ptrA/ptrB as scratch)
-    tmp1=a=0
+    ptrB=a=0                                    // back orb (P1) = small shape always
+    a=[158] c+ a-tmp4 x=a a=tmp4 PosM0          // line A: spark M0 (M1 x waits in X)
+    a=x PosM1                                   // line B: spark M1 (mirrored)
+    a=tmp3 PosBL                                // line C: ball
+    wsync hmove=a                               // line D: fine positions
+    tmp1=a=0 em0=a em1=a                        // sparks appear on each slot's HMOVE line
+    *12                                         // HMxx writes must be >= 24 cycles after HMOVE
+    hb=a                                        // the ball must not move on the slot HMOVEs
+    x=eq_sidx a=EqSparkT0-1,x hm0=a a=EqSparkT1-1,x hm1=a   // spark offsets for slot 0
     {
         y=tmp1 a=eq_x0,y x=eq_x1,y PosP0        // line 1 (P1 position waits in X)
         a=x PosP1                               // line 2
-        wsync hmove=a                           // line 3: apply fine motion
+        wsync hmove=a                           // line 3: orbs to position, sparks step
         y=tmp1
-        a=eq_c0,y cp0=a a&1 a<< a<< a<< a<< ptrA=a   // shape: big/small by colour bit0
-        a=eq_c1,y cp1=a a&1 a<< a<< a<< a<< ptrB=a
-        x=0xFF a=tmp1 a?ptrC =={ x=ptrC+1 } tmp2=x   // scanner row in this slot (0xFF = none)
+        a=eq_c0,y cp0=a a&1 x=a a=EqShapeLo,x ptrA=a     // shape: big/small by colour bit0
+        a=eq_c1,y cp1=a                         // back orb is always small: ptrB lo = 0 (set above)
+        x=eq_sidx                               // sparks: next slot's move + this slot's enable
+        a=EqSparkT0,x hm0=a a&eq_spk em0=a
+        a=EqSparkT1,x hm1=a a&eq_spk em1=a      // (line 3 ends at ~cycle 62)
         y=[ORB_H-1]
         {                                       // lines 4..13, in pairs
             wsync                               // even line
             gp0=a=(ptrA),y
             gp1=a=(ptrB),y
-            a=eq_bg tmp3=a a=0 x=a              // next line: no scanner (PF off, normal background)
-            y?tmp2 =={ tmp3=a a=0xFF x=ptrD }   // scanner: PF on, its colour, black background
+            x=0 a=eq_bg tmp3=a a=0x30 tmp4=a    // next line: frame on, no PF, normal background
+            eq_bd-- =={                         // ball pair: ENABL + ball colour, frame off unless
+                x=eq_bcol a=eq_spk a&0x30 a|0x02 tmp4=a   //  the background flashes (black ball)
+            }
+            a=0
+            eq_sd-- =={ tmp3=a a=0xC0 tmp4=a x=eq_scol a=0xFF }   // scanner: PF on, black bg
             y--
             wsync                               // odd line
-            pf1=a pf2=a a^0x30 pf0=a cpf=x      // PF0: 0x30 black frame / 0xCF scanner px 8-15
-            a=tmp3 cbg=a                        // (all written before the beam gets there, cycle 20)
+            pf1=a pf2=a cpf=x                   // PF + colours written before the beam gets there
+            a=tmp3 cbg=a
+            a=tmp4 pf0=a eb=a                   // PF0 0x30 frame / 0xC0 scanner / 0x02 ball (+ENABL)
             gp0=a=(ptrA),y
             gp1=a=(ptrB),y
+            a=0 em0=a em1=a                     // sparks off
             y--
         }>=0
-        wsync a=0 cpf=a pf1=a pf2=a             // line 14: clear scanner, orbs
+        wsync a=0 cpf=a pf1=a pf2=a             // line 14: clear scanner, ball, orbs
         a=eq_bg cbg=a a=0x30 pf0=a
-        a=0 gp0=a gp1=a
+        a=0 gp0=a gp1=a eb=a
+        eq_sidx++
         tmp1++ a=tmp1 a?[EQ_SLOTS] =={ goto eq_kernel_done }
     } always
     eq_kernel_done:
@@ -415,8 +544,9 @@ func eqsine {
     // black 8 px frame on both sides (PF0 bits 4-5, reflected): hides the HMOVE
     // "comb" (8 black pixels at the left edge of every slot's HMOVE line) on the
     // coloured background. Players have priority over the playfield.
-    pf0=a=0x30 ctpf=a=0x01
-    ns0=ns1=a=0 rep0=rep1=a vdp0=vdp1=a em0=em1=a eb=a
+    pf0=a=0x30 ctpf=a=0x31                      // + ball 8 px wide
+    ns0=ns1=a=0x10                              // missiles (sparks) 2 px, players 1 copy
+    a=0 rep0=rep1=a vdp0=vdp1=a em0=em1=a eb=a
     x=0x4F { eq_x0,x=a x-- }>=0                 // clear 80-CF
     eq_beat=a eq_kick=a eq_pv0=a eq_pv1=a eq_base=a eq_gain=a
     eq_mode=a=0xFF                              // force "section change" on the first frame
@@ -432,7 +562,7 @@ func eqsine {
         eqsine_enter:                           // (first frame skips the overscan work - no time left)
         sync2                                   // --- vblank ---
             eq_update
-            eq_scan_prep                        // scanner position/colour
+            eq_fx_prep                          // scanner, ball, sparks
             cbg=a=eq_bg                         // (set during VBLANK -> whole picture is coloured)
         sync3                                   // --- picture ---
             eq_kernel

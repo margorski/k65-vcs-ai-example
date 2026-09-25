@@ -22,7 +22,12 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
      "grzebień" HMOVE,
    - **skaner** – pozioma linia z playfieldu (kule przelatują przed nią) zjeżdżająca w dół w takt
      utworu: w spokojnych sekcjach i breakdownach 1 przebieg na 2 wzory, w głównych 1 na wzór,
-     w build-upach 2 na wzór; na stopie podskakuje w górę, hi-haty i stopy ją rozjaśniają.
+     w build-upach 2 na wzór; na stopie podskakuje w górę, hi-haty i stopy ją rozjaśniają,
+   - **piłeczka (ball)** – "karaoke": jedzie po skanerze w lewo i prawo raz na wzór i podskakuje
+     po paraboli na stopie (wysokość zależna od sekcji) oraz lekko na hi-hatach; chowa się za
+     kulami; podczas błysku tła jest czarną sylwetką (żeby krawędzie ekranu zostały czyste),
+   - **iskry (missile M0/M1)** – na stopie z osi helisy wylatuje w obie strony chmura iskier
+     w kolorach kul, rozchodząca się w poszarpane zygzaki (32 iskry z 2 missile'i).
 
 **Obecnie włączony jest tylko efekt 3 (EQ Sine)** – tęcza i plazma są zakomentowane w `main.k65`
 (kod zostaje; żeby je włączyć, wystarczy odkomentować linie).

@@ -6,9 +6,10 @@ frame timing: WSYNC, VSYNC, VBLANK, COLUBK, the RIOT timer and F8/F6/F4
 bankswitching. Prints scanline counts per frame and can render selected frames
 to a PNG: background (COLUBK, including mid-scanline writes) and players P0/P1
 (RESPx, HMPx+HMOVE, GRPx, COLUPx, NUSIZx size 1x/2x/4x, P0 above P1),
-missiles M0/M1 (RESMx, HMMx, ENAMx, width) and the playfield (PF0-2, reflect, COLUPF).
+missiles M0/M1 (RESMx, HMMx, ENAMx, width), the ball (RESBL, HMBL, ENABL, width)
+and the playfield (PF0-2, reflect, COLUPF).
 
-It does NOT emulate the ball/score mode/PF priority/audio/VDEL/sprite copies - it is a timing +
+It does NOT emulate score mode/PF priority/audio/VDEL/sprite copies - it is a timing +
 picture sanity check, meant to be run by humans or AI agents after `make`.
 
 Usage (py65 is fetched on the fly by uv):
@@ -48,7 +49,8 @@ PAL = [
 
 # TIA write registers recorded for analysis/rendering
 TRACKED = {0x00, 0x01, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0D, 0x0E, 0x0F,
-           0x10, 0x11, 0x12, 0x13, 0x1B, 0x1C, 0x1D, 0x1E, 0x20, 0x21, 0x22, 0x23, 0x2A, 0x2B}
+           0x10, 0x11, 0x12, 0x13, 0x14, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+           0x20, 0x21, 0x22, 0x23, 0x24, 0x2A, 0x2B}
 
 # bankswitch schemes by ROM size: (first hotspot, bank count)
 SCHEMES = {2048: None, 4096: None, 8192: (0x1FF8, 2), 16384: (0x1FF6, 4), 32768: (0x1FF4, 8)}
@@ -196,23 +198,23 @@ def value_at(tl, cycles, t, default=0):
 
 
 def object_positions(events):
-    """Per object (P0, P1, M0, M1): [(cycle, x)] - RESxx sets the position, HMOVE applies HMxx."""
-    pos = [0, 0, 0, 0]
-    hm = [0, 0, 0, 0]
-    out = [[(0, 0)] for _ in range(4)]
+    """Per object (P0, P1, M0, M1, BL): [(cycle, x)] - RESxx sets the position, HMOVE applies HMxx."""
+    pos = [0, 0, 0, 0, 0]
+    hm = [0, 0, 0, 0, 0]
+    out = [[(0, 0)] for _ in range(5)]
     for c, r, v in events:
-        if 0x10 <= r <= 0x13:
+        if 0x10 <= r <= 0x14:
             o = r - 0x10
             cc = (c - (c // LINE_CYCLES) * LINE_CYCLES) * 3         # colour clock at the end of the STA
-            off = 5 if o < 2 else 4                                   # players +5, missiles +4
+            off = 5 if o < 2 else 4                                   # players +5, missiles/ball +4
             pos[o] = (cc - 68 + off) % 160 if cc >= 68 else off - 2  # (classic PosObject -> pixel = A)
             out[o].append((c, pos[o]))
-        elif 0x20 <= r <= 0x23:
+        elif 0x20 <= r <= 0x24:
             hm[r - 0x20] = v
         elif r == 0x2B:
-            hm = [0, 0, 0, 0]
+            hm = [0, 0, 0, 0, 0]
         elif r == 0x2A:
-            for o in range(4):
+            for o in range(5):
                 m = hm[o] >> 4
                 m = m - 16 if m >= 8 else m
                 pos[o] = (pos[o] - m) % 160
@@ -265,8 +267,19 @@ def render_frame(events, first_line, height):
                 for x in range(k * 4, k * 4 + 4):
                     rows[y][x] = col
 
-    # objects, lowest priority first: M1, P1, M0, P0 (P0/M0 above P1/M1)
     positions = object_positions(events)
+
+    # ball: same layer and colour as the playfield, width from CTRLPF bits 4-5
+    bl, blc = positions[4], [c for c, _ in positions[4]]
+    for y in range(height):
+        line_start = (first_line + y) * LINE_CYCLES
+        x0 = value_at(bl, blc, line_start + LINE_CYCLES)
+        t = line_start + (x0 + 68) // 3
+        if reg(0x1F, t) & 2:
+            for k in range(1 << ((reg(0x0A, t) >> 4) & 3)):
+                rows[y][(x0 + k) % 160] = reg(0x08, t)
+
+    # objects, lowest priority first: M1, P1, M0, P0 (P0/M0 above P1/M1)
     for o in (3, 1, 2, 0):
         p = o & 1                                                  # colour/NUSIZ of player 0 or 1
         pl, plc = positions[o], [c for c, _ in positions[o]]

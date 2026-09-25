@@ -78,7 +78,8 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 
 - `0x80-0x84` rainbow effect (`rb_phase`, `rb_wave`, `rb_start`, `rb_ptr`)
 - `0x88-0x9E` plasma (`pl_ptr[14]`, phases, zoom, kernel counters)
-- `0x80-0xCF` eqsine (`eq_x0/x1/c0/c1/en[16]`), `0xE8-0xEE` eqsine state
+- `0x80-0xCF` eqsine (`eq_x0/x1/c0/c1/en[16]`), `0xE8-0xEF` eqsine state; during the frame
+  eqsine reuses the scratch bytes `0xE1-0xE7` + `0xEE` for scanner/ball/spark kernel parameters
 - (`0x80-0xCF` is shared per-effect scratch: every effect initialises what it uses)
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)

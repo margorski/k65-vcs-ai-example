@@ -126,6 +126,12 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
   frame: `pf0=a=0x30 ctpf=a=1 cpf=a=0` (PF0 bits 4-5 = pixels 0-7, reflected -> also 152-159),
   zero kernel cost, players are drawn over the playfield. P0 always has priority over P1 - assign
   the "front" object to P0 per slot for 3D depth. Colour bit0 is ignored by TIA - usable as a flag.
+- **Ball with a black PF frame**: the ball shares COLUPF with the playfield. On the ball's lines
+  switch the frame off (PF0 = 0x02: frame bits clear, and the same byte written to ENABL enables
+  the ball) so COLUPF can hold the ball colour; lines without HMOVE don't need the frame.
+- **Many missiles from two**: position M0/M1 once at the top, then move them per slot with HMMx on
+  the slot's HMOVE (-8..+7 px per slot) and switch ENAMx per slot -> 32 sparks. HMMx ignores bits
+  0-3 and ENAMx uses only bit 1, so one table byte can hold both the move and the enable.
 - **Music reactivity**: TIA gives no spectrum, but the player knows what it plays: copy AUDVx/AUDFx
   to RAM each frame. AUDF (pitch divider) -> band, AUDV -> energy (spread to neighbours, decay per
   frame), a jump of the summed volume -> beat trigger.
