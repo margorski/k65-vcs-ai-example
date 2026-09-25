@@ -1,0 +1,81 @@
+// ============================================================================
+//  Rainbow background effect
+//
+//  Every visible scanline gets its own background colour (COLUBK = cbg)
+//  taken from a 256-byte rainbow table. The start index scrolls each frame
+//  and is additionally wobbled by a sine table, so the rainbow flows
+//  up the screen with a smooth "breathing" motion.
+//
+//  Per-scanline kernel cost: WSYNC + LDA abs,x + STA + INX + DEY + BNE
+//  = ~16 cycles of 76 - plenty of room for more effects later.
+// ============================================================================
+
+[ RAINBOW_LINES = 228 ]     // scanlines drawn by the kernel (visible window is 230, see _defs.k65)
+[ RAINBOW_HUES = 12 ]       // PAL has 12 chroma values (0x2_..0xD_), all used once per table
+[ WOBBLE_AMPLITUDE = 48 ]   // max sine offset (in table entries) added to the scroll
+
+// RAM variables (see RAM map in _gamedefs.k65)
+var rb_phase = 0x80;        // linear scroll position, +1 per frame
+var rb_wave  = 0x81;        // sine table index, +1 per frame
+var rb_start = 0x82;        // first table index for the current frame
+
+// Rainbow colour table, generated at compile time by the evaluator.
+// The 256 entries are split into 12 bands (~21 scanlines each), one per PAL hue.
+// PAL hues ordered around the colour wheel: 2 4 6 8 A C | D B 9 7 5 3
+//   band i<6  -> hue 2+2*i       band i>=6 -> hue 25-2*i
+// Inside a band the luminance follows a half sine 2..A, so every band is a
+// shaded bar and neighbouring bands blend into one smooth rainbow.
+// The table is exactly 256 bytes, so wrapping the X index is seamless.
+data RainbowColors {
+    align 256       // indexed with ,x across the whole page - keep it page aligned
+    for x=0..255 eval [
+        band = floor( x*RAINBOW_HUES/256 ),
+        pos  = frac ( x*RAINBOW_HUES/256 ),
+        (band<6 ? 2+2*band : 25-2*band)*16 + (floor( 2 + 8*sin(pos*pi) ) & 0x0E)
+    ]
+}
+
+// Sine wobble 0..2*WOBBLE_AMPLITUDE (kept non-negative on purpose)
+data RainbowWobble {
+    align 256
+    for x=0..255 eval [ (sin(x/256*pi*2)*.499+.499)*WOBBLE_AMPLITUDE*2 ]
+}
+
+// Frame logic - runs during vertical blank (after sync2), costs a few cycles only
+inline rainbow_update {
+    rb_phase++                          // scroll one table entry per frame
+    x=rb_wave  rb_wave++
+    a=RainbowWobble,x                   // A = wobble offset
+    c- a+rb_phase                       // A = wobble + scroll (wraps at 256 = seamless)
+    rb_start=a
+}
+
+// Visible area kernel - one colour per scanline
+inline rainbow_kernel {
+    x=rb_start
+    y=[RAINBOW_LINES]
+    {
+        wsync                           // wait for start of scanline (HBLANK)
+        cbg=a=RainbowColors,x           // 4+3 cycles - done well inside HBLANK
+        x++
+        y--
+    }!=
+    wsync
+    cbg=a=0                             // black below the effect / in overscan
+}
+
+// Effect entry point - called from main, returns when the song reaches seqbrk
+func rainbow {
+    ctpf=a=0x00 cbg=a=0x00 cpf=a=0x00 pf0=pf1=pf2=a=0x0 gp0=gp1=a=0
+    rb_phase=a=0 rb_wave=a
+
+    {
+        sync1                           // --- overscan (bottom border) ---
+            far song_player             // music lives in bank "audio"
+            BreakOnSeq                  // return to main when song position >= seqbrk
+        sync2                           // --- VSYNC + vertical blank (top border) ---
+            rainbow_update
+        sync3                           // --- visible picture ---
+            rainbow_kernel
+    } always
+}

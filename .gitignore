@@ -1,0 +1,20 @@
+# editor / OS
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# build output (bin/ has its own .gitignore that keeps only the directory)
+*.bin
+*.lst
+*.sym
+*.gmap
+program.gmap
+test_raw.sym
+
+# legacy Stella props from the template (not used with Stella 6.x)
+props.cfg
+
+# python
+__pycache__/
+*.pyc

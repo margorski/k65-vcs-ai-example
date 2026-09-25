@@ -1,0 +1,10 @@
+main {
+    .full_reset:
+    init                        // clear RAM + TIA, set stack (see _defs.k65)
+    {
+        seqbrk=a=0xFF           // song position that ends the effect (0xFF = never, song loops at 102)
+        rainbow                 // effects/rainbow.k65
+
+        goto .full_reset
+    } always
+}

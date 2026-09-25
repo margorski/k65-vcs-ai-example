@@ -1,0 +1,128 @@
+
+// player vars:
+//	songpos_seq		- pattern number
+//	songpos_step	- step number
+//	songpos_tick	- tick number
+//
+
+
+
+
+// song data:
+//	SongSeq0		- pattern sequence for channel 0
+//	SongSeq1		- pattern sequence for channel 1
+//	SongSeq2		- pattern sequence for channel 2
+//	SongSeq3		- pattern sequence for channel 3
+//	SongPatA		- pattern data:	envelope position
+//	SongPatB		- pattern data: waveform / frequency
+//	SongEnvVol		- volume envelope
+//	SongEnvFreq		- frequency envelope
+//	SongScaleFreq	- SongPatB -> freq table (non-envelope)
+//	SongScaleWave	- SongPatB -> wave table (non-envelope)
+//
+
+
+//  0  High         8  9p
+//  1  4p           9  5p
+//  2  :15 -> 4p    A  :31
+//  3  5p -> 4p		B  High
+//  4  :2			C  :6
+//  5  :2			D  :6
+//  6  :31			E  :93
+//  7  5p -> :2		F  5p -> :6
+//
+// 1	4/5	6/A	7/9	8	C/D	E
+// x2	3	xF
+//
+
+
+
+
+inline player_prep_pointers {
+	// input:
+	//	A	- pattern number
+
+	y=a a&0xF0 ptrA=a
+	a=y a&0x0F c- a+&>SongPatA ptrA+1=a	// A - pointer to SongPatA
+
+	y=songpos_step
+	a=(ptrA),y ptrB=a					// B - pointer to envelope (high byte not ready yet)
+}
+
+inline player_fetch_volume {
+	y=songpos_tick
+	ptrB+1=a=&>SongEnvVol
+	a=(ptrB),y
+}
+
+inline player_fetch_freq_wave {
+	// output:
+	//	A	- freq
+	//	X	- wave
+	//
+
+	// redirect A to SongPatB
+	a=ptrA+1
+	c+ a-&>SongPatA
+	c- a+&>SongPatB	ptrA+1=a	// A - pointer to SongPatB
+
+	y=songpos_step
+	a=(ptrA),y x=a
+	<0{
+		y=songpos_tick
+		ptrB+1=a=&>SongEnvFreq
+		a=(ptrB),y
+	}
+	else
+	{
+		a=SongScaleFreq,x	  y=a
+		a=SongScaleWave,x x=a a=y
+	}
+}
+
+
+func song_player {
+	x=songpos_seq
+	a=SongSeq0,x
+	player_prep_pointers
+	player_fetch_volume
+	!={
+		av0=a
+	} else {
+		// channel 1 play through
+		x=songpos_seq
+		a=SongSeq1,x
+		player_prep_pointers
+		player_fetch_volume		av0=a
+	}
+	player_fetch_freq_wave  af0=a ac0=x
+
+
+		x=songpos_seq
+		a=SongSeq2,x
+		player_prep_pointers
+		player_fetch_volume
+		!={
+			av1=a
+		} else {
+			// channel 3 play through
+			x=songpos_seq
+			a=SongSeq3,x
+			player_prep_pointers
+			player_fetch_volume		av1=a
+		}
+		player_fetch_freq_wave	af1=a ac1=x
+	
+	// next tick/step/pattern
+	x=songpos_tick x++
+	a=songpos_step a&1
+	a?1 <{ x?6 } else { x?5 }
+	!={ songpos_tick=x }
+	else {
+		songpos_tick=x=0
+		a=songpos_step c- a+1 song_step_wrap songpos_step=a
+		=={
+			x=songpos_seq x++ song_seq_wrap songpos_seq=x
+		}
+	}
+}

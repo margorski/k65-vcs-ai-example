@@ -1,0 +1,39 @@
+// === RAM Map ===
+//
+//			x0		x1		x2		x3		x4		x5		x6		x7		x8		x9		xA		xB		xC		xD		xE		xF
+//	8x		rbph    rbwv    rbst    -       -       -       -       -       -       -       -       -       -       -       -       -
+//	9x		-       -       -       -       -       -       -       -		-		-		-		-		-		-		-		-	
+//	Ax		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-			 
+//	Bx		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		
+//	Cx		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-			 
+//	Dx		-	    -	    -	    -   	-		-		-		-		-		-		-		-		-		-		-		-		 
+//	Ex		tmp1	tmp2	tmp3	tmp4	ptrC	ptrC	ptrD	ptrD	-		-		-		-		-		-		-		-
+//	Fx		sseq     sstep  stick	sbrq    ptrA	ptrA	ptrB	ptrB	STACK	STACK	STACK	STACK	STACK	STACK	STACK	STACK
+
+// preallocate all banks
+bank core;				data _Bank0 { 0 }
+bank audio;				data _Bank1 { 0 }
+bank bank2;             data _Bank2 { 0 }
+bank bank3;			    data _Bank3 { 0 }
+bank bank4; 			data _Bank4 { 0 }
+bank bank5;				data _Bank5 { 0 }
+bank bank6;             data _Bank6 { 0 }
+bank bank7;             data _Bank7 { 0 }
+
+bank core;
+
+// RAM variables
+var ptrA[2] = 0xF4;
+var ptrB[2] = 0xF6;
+var ptrC[2] = 0xE4;
+var ptrD[2] = 0xE6;
+
+var	tmp1 = 0xE0;
+var	tmp2 = 0xE1;
+var	tmp3 = 0xE2;
+var tmp4 = 0xE3;
+
+var songpos_seq = 0xF0;
+var songpos_step = 0xF1;
+var songpos_tick = 0xF2;
+var seqbrk = 0xF3
