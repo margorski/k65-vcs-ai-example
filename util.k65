@@ -7,3 +7,41 @@ inline SetHorizPos {
 inline BreakOnSeq {
 	a=songpos_seq a?seqbrk >= { return }
 }
+
+// ---------------------------------------------------------------------------
+//  Effect switching: FIRE (joystick 0) or SELECT -> fade out -> effect returns
+// ---------------------------------------------------------------------------
+[ FX_FADE_MAX = 31 ]            // fade counter 0..31, fade level = counter/4 = 0..7
+
+var fx_fade  = 0xD0;            // 0 = black ... FX_FADE_MAX = full brightness
+var fx_state = 0xD1;            // 0 = fading in / running, !=0 = fading out
+var btn_prev = 0xD2;            // button state from previous frame (edge detection)
+
+// call once when an effect starts
+inline FxStart {
+    fx_fade=a=0 fx_state=a
+}
+
+// A = current fade level 0..7 (palette page offset for effects with fade tables)
+inline FxFadeLevel {
+    a=fx_fade a>> a>>
+}
+
+// call once per frame (overscan); does `return` from the effect when faded out
+inline FxUpdate {
+    // X = 1 if FIRE or SELECT is held
+    x=0
+    a=INPT4 >=0{ x=1 }          // bit7 = 0 -> fire pressed
+    a=SWCHB a&2 =={ x=1 }       // bit1 = 0 -> select pressed
+    a=btn_prev =={              // not held last frame...
+        a=x !={ fx_state=a }    // ...and held now -> start fade out
+    }
+    btn_prev=x
+
+    a=fx_state !={
+        a=fx_fade =={ return }  // fully black -> back to main, next effect
+        fx_fade--
+    } else {
+        a=fx_fade a?[FX_FADE_MAX] <{ fx_fade++ }
+    }
+}

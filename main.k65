@@ -1,10 +1,9 @@
 main {
-    .full_reset:
     init                        // clear RAM + TIA, set stack (see _defs.k65)
+    seqbrk=a=0xFF               // song position that ends an effect (0xFF = never, song loops at 102)
     {
-        seqbrk=a=0xFF           // song position that ends the effect (0xFF = never, song loops at 102)
-        rainbow                 // effects/rainbow.k65
-
-        goto .full_reset
-    } always
+        rainbow                 // effects/rainbow.k65 (bank core)
+        far plasma              // effects/plasma.k65  (bank bank2)
+        far eqsine              // effects/eqsine.k65  (bank bank3)
+    } always                    // FIRE / SELECT switches to the next effect
 }

@@ -3,15 +3,19 @@
 
 Runs a VCS ROM on a 6502 core (py65), emulating only what matters for
 frame timing: WSYNC, VSYNC, VBLANK, COLUBK, the RIOT timer and F8/F6/F4
-bankswitching. Prints scanline counts per frame and can render the
-background colour of every scanline to a PNG (one row = one scanline).
+bankswitching. Prints scanline counts per frame and can render selected frames
+to a PNG: background (COLUBK, including mid-scanline writes) and players P0/P1
+(RESPx, HMPx+HMOVE, GRPx, COLUPx, NUSIZx size 1x/2x/4x, P0 above P1).
 
-It does NOT emulate playfield/sprites/audio - it is a timing + background
-colour sanity check, meant to be run by humans or AI agents after `make`.
+It does NOT emulate playfield/missiles/ball/audio/VDEL - it is a timing +
+picture sanity check, meant to be run by humans or AI agents after `make`.
 
 Usage (py65 is fetched on the fly by uv):
     uv run --with py65 --with pillow tools/vcs_frame_check.py bin/demo.bin \
-        [--frames 8] [--png bin/frames.png]
+        [--frames 8] [--png bin/frames.png] [--show 0,4,7] [--press 60,200]
+
+  --press N,M   hold FIRE for 3 frames starting at frames N, M (tests effect switching)
+  --show a,b    frames rendered into the PNG (default: 4 evenly spaced frames)
 """
 import argparse
 import sys
@@ -41,6 +45,9 @@ PAL = [
     0x000000, 0x282828, 0x505050, 0x747474, 0x949494, 0xb4b4b4, 0xd0d0d0, 0xececec,
 ]
 
+# TIA write registers recorded for analysis/rendering
+TRACKED = {0x00, 0x01, 0x04, 0x05, 0x06, 0x07, 0x09, 0x10, 0x11, 0x1B, 0x1C, 0x20, 0x21, 0x2A, 0x2B}
+
 # bankswitch schemes by ROM size: (first hotspot, bank count)
 SCHEMES = {2048: None, 4096: None, 8192: (0x1FF8, 2), 16384: (0x1FF6, 4), 32768: (0x1FF4, 8)}
 
@@ -54,18 +61,24 @@ class VCS:
         self.bank = self.scheme[1] - 1 if self.scheme else 0
         self.ram = bytearray(128)
         self.mpu = None
+        self.op_len = 0     # cycle length of the instruction being executed
         self.wsync = False
         self.timer_start = 0
         self.timer_value = 0
         self.timer_shift = 10
         self.events = []    # (cycle, register, value) for VSYNC/VBLANK/COLUBK
+        self.frame = 0      # counted on VSYNC rising edges
+        self.vsync = False
+        self.pressed = set()  # frames with FIRE held
 
     # --- py65 memory interface ---
     def __len__(self):
         return 0x10000
 
     def cycles(self):
-        return self.mpu.processorCycles if self.mpu else 0
+        # py65 adds an instruction's cycles only after executing it; TIA/RIOT accesses
+        # happen on the instruction's last cycle, so report the end of the current instruction
+        return self.mpu.processorCycles + self.op_len if self.mpu else 0
 
     def _hotspot(self, a):
         if self.scheme:
@@ -81,7 +94,9 @@ class VCS:
                 return self.rom[a & 0x7FF]
             return self.rom[self.bank * 4096 + (a & 0xFFF)]
         if not a & 0x80:                        # TIA read
-            return 0x80 if (a & 0x0F) in (0x0C, 0x0D) else 0x00
+            if (a & 0x0F) == 0x0C:              # INPT4: bit7 = 0 when FIRE pressed
+                return 0x00 if self.frame in self.pressed else 0x80
+            return 0x80 if (a & 0x0F) == 0x0D else 0x00
         if not a & 0x200:                       # RAM
             return self.ram[a & 0x7F]
         reg = a & 0x07                          # RIOT
@@ -102,8 +117,12 @@ class VCS:
             reg = a & 0x3F
             if reg == 0x02:
                 self.wsync = True
-            elif reg in (0x00, 0x01, 0x09):
+            elif reg in TRACKED:
                 self.events.append((self.cycles(), reg, value))
+                if reg == 0x00:
+                    if value & 2 and not self.vsync:
+                        self.frame += 1
+                    self.vsync = bool(value & 2)
             return
         if not a & 0x200:
             self.ram[a & 0x7F] = value
@@ -128,7 +147,11 @@ class VCS:
         self.mpu.reset()
         self.mpu.pc = self.mpu.WordAt(0xFFFC)
         while self.mpu.processorCycles < max_cycles:
+            pc = self.mpu.pc
+            op = self.rom[(pc & 0x7FF) if len(self.rom) == 2048 else self.bank * 4096 + (pc & 0xFFF)]
+            self.op_len = self.mpu.cycletime[op]
             self.mpu.step()
+            self.op_len = 0
             if self.wsync:
                 self.wsync = False
                 c = self.mpu.processorCycles
@@ -159,62 +182,145 @@ def analyse(events, total_cycles):
     return [f for f in frames if f["end"]]
 
 
-def colour_at(events, cycle):
-    col = 0
-    for cyc, reg, val in events:
-        if cyc > cycle:
-            break
-        if reg == 0x09:
-            col = val
-    return col
+def timeline(events, reg):
+    """[(cycle, value)] of all writes to one TIA register."""
+    return [(c, v) for c, r, v in events if r == reg]
+
+
+def value_at(tl, cycles, t, default=0):
+    import bisect
+    i = bisect.bisect_right(cycles, t) - 1
+    return tl[i][1] if i >= 0 else default
+
+
+def player_positions(events):
+    """Per player: [(cycle, x)] - RESPx sets the position, HMOVE applies HMPx."""
+    pos = [0, 0]
+    hm = [0, 0]
+    out = [[(0, 0)], [(0, 0)]]
+    for c, r, v in events:
+        if r in (0x10, 0x11):
+            p = r - 0x10
+            cc = (c - (c // LINE_CYCLES) * LINE_CYCLES) * 3         # colour clock at the end of the STA
+            pos[p] = (cc - 68 + 5) % 160 if cc >= 68 else 3          # (classic PosObject -> pixel = A)
+            out[p].append((c, pos[p]))
+        elif r in (0x20, 0x21):
+            hm[r - 0x20] = v
+        elif r == 0x2B:
+            hm = [0, 0]
+        elif r == 0x2A:
+            for p in (0, 1):
+                m = hm[p] >> 4
+                m = m - 16 if m >= 8 else m
+                pos[p] = (pos[p] - m) % 160
+                out[p].append((c, pos[p]))
+    return out
+
+
+def render_frame(events, first_line, height):
+    """Pixel colours of `height` lines starting at absolute line `first_line`.
+    A write lands on the pixel the beam is at during the last cycle of the STA
+    (3 colour clocks per CPU cycle, 68 clocks of HBLANK)."""
+    import bisect
+    colubk = timeline(events, 0x09)
+    cycles = [c for c, _ in colubk]
+    rows = []
+    for y in range(height):
+        line_start = (first_line + y) * LINE_CYCLES
+        i = bisect.bisect_right(cycles, line_start) - 1
+        col = colubk[i][1] if i >= 0 else 0
+        row = [col] * 160
+        i += 1
+        while i < len(colubk) and colubk[i][0] < line_start + LINE_CYCLES:
+            px = (colubk[i][0] - line_start) * 3 - 68            # event cycle = end of the STA
+            col = colubk[i][1]
+            for x in range(max(px, 0), 160):
+                row[x] = col
+            i += 1
+        rows.append(row)
+
+    # players: P1 first, then P0 on top (P0 has priority)
+    positions = player_positions(events)
+    for p in (1, 0):
+        grp, colu, nusiz = timeline(events, 0x1B + p), timeline(events, 0x06 + p), timeline(events, 0x04 + p)
+        gc, cc, nc = [c for c, _ in grp], [c for c, _ in colu], [c for c, _ in nusiz]
+        pl, plc = positions[p], [c for c, _ in positions[p]]
+        for y in range(height):
+            line_start = (first_line + y) * LINE_CYCLES
+            x0 = value_at(pl, plc, line_start + LINE_CYCLES)
+            t = line_start + (x0 + 68) // 3                          # beam reaches the sprite
+            g = value_at(grp, gc, t)
+            if not g:
+                continue
+            c = value_at(colu, cc, t)
+            w = {5: 2, 7: 4}.get(value_at(nusiz, nc, t) & 7, 1)
+            for bit in range(8):
+                if g & (0x80 >> bit):
+                    for k in range(w):
+                        rows[y][(x0 + bit * w + k) % 160] = c
+    return rows
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("rom")
     ap.add_argument("--frames", type=int, default=8, help="frames to simulate (default 8)")
-    ap.add_argument("--png", help="write background colours of the measured frames to this PNG")
+    ap.add_argument("--png", help="render background of selected frames to this PNG")
+    ap.add_argument("--show", help="comma separated frame numbers to render (default: 4 evenly spaced)")
+    ap.add_argument("--press", default="", help="comma separated frames where FIRE is pressed (held 3 frames)")
     ap.add_argument("--expect", type=int, default=312, help="expected lines per frame (PAL 312, NTSC 262)")
     args = ap.parse_args()
 
     rom = open(args.rom, "rb").read()
     vcs = VCS(rom)
+    for f in filter(None, args.press.split(",")):
+        vcs.pressed.update(range(int(f), int(f) + 3))
     vcs.run((args.frames + 2) * 330 * LINE_CYCLES)
     frames = analyse(vcs.events, vcs.mpu.processorCycles)[: args.frames]
     if not frames:
         sys.exit("no complete frames found (VSYNC never toggled?)")
 
-    ok = True
+    L = LINE_CYCLES
+    bad = 0
+    verbose = len(frames) <= 16
     print("frame  lines  vsync  top(vblank)  visible  bottom(overscan)")
     for i, f in enumerate(frames):
-        L = LINE_CYCLES
         vsync = round((f["vsync_end"] - f["start"]) / L) if f["vsync_end"] else 0
         top = round((f["vis_start"] - f["vsync_end"]) / L) if f["vis_start"] and f["vsync_end"] else "?"
         vis = round((f["vis_end"] - f["vis_start"]) / L) if f["vis_end"] and f["vis_start"] else "?"
         bot = round((f["end"] - f["vis_end"]) / L) if f["vis_end"] else "?"
-        flag = "" if f["lines"] == args.expect else "   <-- expected %d" % args.expect
-        ok &= f["lines"] == args.expect
-        print(f"{i:5}  {f['lines']:5}  {vsync:5}  {top!s:>11}  {vis!s:>7}  {bot!s:>16}{flag}")
+        wrong = f["lines"] != args.expect
+        bad += wrong
+        if verbose or wrong:
+            flag = "   <-- expected %d" % args.expect if wrong else ""
+            print(f"{i:5}  {f['lines']:5}  {vsync:5}  {top!s:>11}  {vis!s:>7}  {bot!s:>16}{flag}")
+    if not verbose:
+        print(f"  ... {len(frames)} frames simulated, {len(frames) - bad} with {args.expect} lines, {bad} wrong")
 
     if args.png:
         from PIL import Image
-        width = 40
-        height = max(round((f["vis_end"] - f["vis_start"]) / LINE_CYCLES) for f in frames if f["vis_end"])
-        img = Image.new("RGB", (width * len(frames) + 4 * (len(frames) - 1), height), (40, 40, 40))
-        for fi, f in enumerate(frames):
-            if not f["vis_end"]:
-                continue
-            first_line = -(-f["vis_start"] // LINE_CYCLES)
-            for y in range(height):
-                c = colour_at(vcs.events, (first_line + y) * LINE_CYCLES + HBLANK_CYCLES + 20)
-                rgb = PAL[(c >> 1) & 0x7F]
-                for x in range(width):
-                    img.putpixel((fi * (width + 4) + x, y), (rgb >> 16, (rgb >> 8) & 0xFF, rgb & 0xFF))
-        img = img.resize((img.width * 2, img.height * 2), Image.NEAREST)
+        if args.show:
+            show = [int(v) for v in args.show.split(",")]
+        else:
+            n = min(4, len(frames))
+            show = [round(k * (len(frames) - 1) / max(n - 1, 1)) for k in range(n)]
+        show = [i for i in show if 0 <= i < len(frames) and frames[i]["vis_end"]]
+        height = max(round((frames[i]["vis_end"] - frames[i]["vis_start"]) / L) for i in show)
+        gap = 4
+        img = Image.new("RGB", (len(show) * (320 + gap) - gap, height), (40, 40, 40))
+        for k, fi in enumerate(show):
+            f = frames[fi]
+            rows = render_frame(vcs.events, -(-f["vis_start"] // L), height)
+            for y, row in enumerate(rows):
+                for x, c in enumerate(row):
+                    rgb = PAL[(c >> 1) & 0x7F]
+                    px = (rgb >> 16, (rgb >> 8) & 0xFF, rgb & 0xFF)
+                    img.putpixel((k * (320 + gap) + 2 * x, y), px)       # TIA pixels are ~2:1 wide
+                    img.putpixel((k * (320 + gap) + 2 * x + 1, y), px)
         img.save(args.png)
-        print(f"background colours written to {args.png} (one column per frame)")
+        print(f"frames {show} rendered to {args.png}")
 
-    sys.exit(0 if ok else 1)
+    sys.exit(0 if bad == 0 else 1)
 
 
 if __name__ == "__main__":

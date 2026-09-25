@@ -1,0 +1,388 @@
+// ============================================================================
+//  EQ Sine - music reactive double helix of multiplexed sprites
+//
+//  16 slots down the screen, in every slot P0 and P1 are re-positioned
+//  (PosObject + HMOVE) and drawn as 10-line orbs -> 32 orbs from 2 sprites.
+//  The orbs form a rotating double helix (sine wave + its mirror).
+//
+//  Music link (no FFT possible - the TIA just has 2 square-ish channels):
+//  the music player copies what it writes to AUDVx/AUDFx/AUDCx into mus_*
+//  every frame. The song was analysed offline (all 102 sequence positions
+//  simulated, see docs/project-structure.md) and three layers react to it:
+//
+//  1. Choreography - EqSongMode[songpos_seq] picks a section mode:
+//       CALM  (intro/grooves/outro)  wide clean helix, slow spin, cool colours
+//       FULL  (main parts)           equalizer: melody bulges + kick pumps & spin jolts
+//       BREAK (breakdowns)           helix collapses to a thin spine pulsing on kicks, reds
+//       BUILD (build-ups)            huge fast-spinning helix, golds
+//     Radius base / EQ gain move smoothly towards the mode targets (~1.5 s),
+//     the palette switches and flashes on every section change.
+//  2. Melody (channel 1) - its pitch is remapped (EqAudfSlot, built from the
+//     pitches the song really uses) to a slot, so the bulge travels up and
+//     down with the melody; volume*4 -> energy, 3/4 and 1/2 into neighbours,
+//     -2 per frame (falls like EQ bars).
+//  3. Drums (channel 0) - volume attack with AUDC 15 = kick -> pump (+radius
+//     on all slots), rotation jolt, flash; AUDC 8 noise attack = hat -> small flash.
+//
+//  3D: P0 is always the orb in front (P0 has priority over P1): the strands
+//  swap sprites when they pass behind each other, front = brighter + bigger
+//  orb shape, back = darker + smaller. Each strand keeps its own hue.
+//
+//  Lives in bank3 - called with `far eqsine` from main.
+// ============================================================================
+
+bank bank3;
+
+[ EQ_SLOTS = 16 ]           // 16 x 14 lines = 224 lines < 229 line picture timer
+[ ORB_H    = 10 ]           // orb height in lines
+[ EQ_CENTER = 76 ]          // orb left pixel on the axis: pixels 76..83 = screen centre (160 px)
+[ EQ_DECAY = 2 ]            // energy fall per frame
+[ EQ_R0 = 3, EQ_RSTEP = 1.7 ] // helix radius in px = EQ_R0 + level*EQ_RSTEP (level 0..15 -> 3..28)
+[ EQ_SPLIT = 6 ]            // slots 0..SPLIT-1 computed in overscan, the rest in vblank (CPU budget)
+[ M_CALM = 0, M_FULL = 1, M_BREAK = 2, M_BUILD = 3 ]
+
+// RAM: 80-CF per-effect arrays, E8-EE scratch/state (see _gamedefs.k65)
+var eq_x0[16] = 0x80;       // P0 (front orb) horizontal position per slot
+var eq_x1[16] = 0x90;       // P1 (back orb) position
+var eq_c0[16] = 0xA0;       // P0 colour (bit0 = big shape flag, ignored by TIA)
+var eq_c1[16] = 0xB0;       // P1 colour
+var eq_en[16] = 0xC0;       // band energy 0..60
+var eq_phase  = 0xE8;       // helix rotation in 1/4 angle steps (angle = phase/4)
+var eq_beat   = 0xE9;       // flash pulse 16 -> 0
+var eq_hoff   = 0xEA;       // hue offset (slowly cycling)
+var eq_lvladd = 0xEB;       // per frame: radius base + kick pump (added to every slot level)
+var eq_lumadd = 0xEC;       // per frame: flash luminance (0/2/4) + fade level*16 (EqFadeLum index)
+var eq_th0    = 0xED;       // per frame: angle of slot 0 (phase/4)
+var eq_flvl   = 0xEE;       // fade level * 16
+var eq_hueofs = 0xEF;       // mode * 32 (palette of the current section in EqHue)
+var eq_mode   = 0xD5;       // current section mode (M_*)
+var eq_base   = 0xD6;       // radius base level 0..15 (smoothed towards EqModeBase)
+var eq_gain   = 0xD7;       // EQ gain row * 64 (smoothed towards EqModeGain) = EnScale row offset
+var eq_kick   = 0xD8;       // kick pump, 2x resolution, -1 per frame
+var eq_pv0    = 0xD9;       // previous channel 0 volume (attack detection)
+var eq_pv1    = 0xDA;       // previous channel 1 volume
+var eq_bg     = 0xDB;       // background colour of the current frame
+
+
+// ---------------------------------------------------------------------------
+//  Tables
+// ---------------------------------------------------------------------------
+
+// Section mode per song sequence position (0..101) - from the offline analysis:
+//   0-15 CALM, 16-23 FULL, 24-31 BREAK, 32-35 BUILD, 36-43 FULL, 44-51 CALM, 52-59 FULL,
+//   60-67 BREAK, 68-71 CALM, 72-75 BUILD, 76-91 FULL, 92-101 CALM
+data EqSongMode {
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0   1 1 1 1 1 1 1 1   2 2 2 2 2 2 2 2   3 3 3 3
+    1 1 1 1 1 1 1 1   0 0 0 0 0 0 0 0   1 1 1 1 1 1 1 1   2 2 2 2 2 2 2 2   0 0 0 0
+    3 3 3 3   1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1   0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0         // safety padding up to 128
+}
+
+// Mode targets                 CALM   FULL   BREAK  BUILD
+data EqModeBase  {              11     2      0      14    }   // radius level without music
+data EqModeGain  {              64     192    64     128   }   // EQ gain row (0..3) * 64 in EnScale
+data EqModeKick  {              2      10     16     4     }   // kick pump (x2) added on a kick
+data EqModeSpeed {              2      3      1      7     }   // rotation, 1/4 angle steps per frame
+
+// Background hue per section, chosen to contrast with the section's helix palette (EqHue):
+//              CALM: maroon    FULL: dark navy     BREAK: dark green   BUILD: violet
+//              (vs blues/cyans) (neutral for rainbow) (vs reds/purples) (complement of gold)
+// Black most of the time; kicks / hats / section changes flash it: hue|2 -> hue|0 -> black.
+data EqBgHue {  0x60            0xB0                0x50                0xC0  }
+
+// Melody pitch -> slot 1..14. AUDF values the song really uses on channel 1
+// (5 7 10 13 14 15 17 18 20 21 24 27 29) are spread evenly, others go to the nearest.
+data EqAudfSlot {
+    1 1 1 1 1 1 1 2 2 3 3 3 4 4 5 6 6 8 9 9 10 11 11 12 12 12 13 13 13 14 14 14
+}
+
+// Energy (0..60) -> radius levels, 4 gain rows (x 0 / .25 / .55 / 1): min(15, e*15/40 * gain)
+// Row index = eq_gain (row*64) + energy, so the whole table fits one page (Y index).
+data EnScale {
+    align 256
+    for x=0..255 eval [ g = floor(x/64), e = x%64,
+                        f = g==0 ? 0 : (g==1 ? .25 : (g==2 ? .55 : 1)),
+                        min(15, floor(e*15/40 * f + .5)) ]
+}
+
+// Orb shapes (symmetric, so the drawing direction doesn't matter).
+// Offset 0 = small (back), offset 16 = big (front). Pointer lo = (colour&1)<<4.
+data EqOrbs {
+    align 256
+    0b00000000 0b00011000 0b00111100 0b01111110 0b01111110
+    0b01111110 0b01111110 0b00111100 0b00011000 0b00000000
+    0 0 0 0 0 0
+    0b00111100 0b01111110 0b11111111 0b11111111 0b11111111
+    0b11111111 0b11111111 0b11111111 0b01111110 0b00111100
+    0 0 0 0 0 0
+}
+
+// Helix x position: 16 amplitude levels x 64 angles, EQ_CENTER + (EQ_R0 + EQ_RSTEP*level)*sin
+data EqSin {
+    align 256
+    for x=0..1023 eval [
+        lvl = floor(x/64),
+        EQ_CENTER + round( (EQ_R0 + lvl*EQ_RSTEP) * sin((x%64)/64*pi*2) )
+    ]
+}
+
+// Amplitude level -> pointer to its EqSin row (saves shifting in the per-slot code)
+data EqPLo {
+    align 16
+    for x=0..15 eval [ (x%4)*64 ]
+}
+data EqPHi {
+    align 16
+    &>EqSin     &>EqSin     &>EqSin     &>EqSin
+    &>EqSin+256 &>EqSin+256 &>EqSin+256 &>EqSin+256
+    &>EqSin+512 &>EqSin+512 &>EqSin+512 &>EqSin+512
+    &>EqSin+768 &>EqSin+768 &>EqSin+768 &>EqSin+768
+}
+
+// Depth luminance by angle: front 6..10 (+ bit0 = big shape when well in front),
+// back 6..2. Equal (6) where the strands swap -> no visible pop.
+data EqLumF {
+    align 64
+    for x=0..63 eval [ q = cos(x/64*pi*2), q = q < 0 ? 0-q : q,      // NOTE: 'q<0' would lex as branch op '<0'
+                       (floor(6 + 4*q) & 14) | (q > 0.4 ? 1 : 0) ]
+}
+data EqLumB {
+    align 64
+    for x=0..63 eval [ q = cos(x/64*pi*2), q = q < 0 ? 0-q : q, floor(6 - 4*q) & 14 ]
+}
+
+// Fade: index = level*16 + luminance nibble -> scaled luminance (bit0 kept)
+data EqFadeLum {
+    align 128
+    for x=0..127 eval [ lvl = floor(x/16), n = x%16, (floor((n & 14)*lvl/7) & 14) | (n & 1) ]
+}
+
+// Strand hues per section mode (32 bytes each, 24 used: read as EqHue,y and EqHue+8,y, y 0..15)
+data EqHue {
+    align 128
+    // CALM: blues, cyans, greens
+    0xD0 0xB0 0x90 0x70 0x50 0x70 0x90 0xB0  0xD0 0xB0 0x90 0x70 0x50 0x70 0x90 0xB0
+    0xD0 0xB0 0x90 0x70 0x50 0x70 0x90 0xB0  0 0 0 0 0 0 0 0
+    // FULL: full rainbow
+    0x20 0x40 0x60 0x80 0xC0 0xD0 0x90 0x50  0x20 0x40 0x60 0x80 0xC0 0xD0 0x90 0x50
+    0x20 0x40 0x60 0x80 0xC0 0xD0 0x90 0x50  0 0 0 0 0 0 0 0
+    // BREAK: reds, magentas, purples
+    0x60 0x80 0xA0 0x80 0x60 0x40 0x60 0x80  0x60 0x80 0xA0 0x80 0x60 0x40 0x60 0x80
+    0x60 0x80 0xA0 0x80 0x60 0x40 0x60 0x80  0 0 0 0 0 0 0 0
+    // BUILD: golds, oranges
+    0x20 0x40 0x20 0x30 0x20 0x40 0x60 0x40  0x20 0x40 0x20 0x30 0x20 0x40 0x60 0x40
+    0x20 0x40 0x20 0x30 0x20 0x40 0x60 0x40  0 0 0 0 0 0 0 0
+}
+
+
+// ---------------------------------------------------------------------------
+//  Music analysis (once per frame, right after the player ran)
+// ---------------------------------------------------------------------------
+
+// A = value, X = slot (any byte) -> eq_en[X] = max(eq_en[X], A) if X < 16
+inline eq_try {
+    x?[EQ_SLOTS] <{ a?eq_en,x >={ eq_en,x=a } }
+}
+
+// tmp1 = band, tmp2 = energy -> spread a bump over band-2..band+2
+inline eq_bump {
+    a=tmp2 a>> a>> tmp3=a a=tmp2 c+ a-tmp3 tmp3=a      // 3/4
+    a=tmp2 a>> tmp4=a                                   // 1/2
+    x=tmp1       a=tmp2 eq_try
+    x--          a=tmp3 eq_try
+    x--          a=tmp4 eq_try
+    x=tmp1 x++   a=tmp3 eq_try
+    x++          a=tmp4 eq_try
+}
+
+inline eq_music {
+    // --- 1. choreography: section mode from song position ---
+    x=songpos_seq a=EqSongMode,x
+    a?eq_mode !={ eq_mode=a eq_beat=a=16 }              // new section -> flash
+    x=eq_mode
+    a=x a<< a<< a<< a<< a<< eq_hueofs=a                 // palette of the section
+    a=songpos_tick =={                                  // every 6 frames: glide to targets
+        a=EqModeBase,x a?eq_base !={ <{ eq_base-- } else { eq_base++ } }
+        a=EqModeGain,x a?eq_gain !={
+            <{ c+ a=eq_gain a-64 } else { c- a=eq_gain a+64 }
+            eq_gain=a
+        }
+    }
+
+    // --- decays ---
+    a=eq_beat !={ eq_beat-- }
+    a=eq_kick !={ eq_kick-- }
+    x=[EQ_SLOTS-1]
+    {
+        a=eq_en,x c+ a-[EQ_DECAY] <{ a=0 } eq_en,x=a
+        x--
+    }>=0
+
+    // --- 3. drums: attack on channel 0 (kick = AUDC 15, hat = AUDC 8) ---
+    a=mus_v0 a&15 y=a c+ a-eq_pv0 eq_pv0=y
+    >={ a?4 >={
+        a=mus_c0 a&15 a?15 =={
+            x=eq_mode a=EqModeKick,x eq_kick=a
+            eq_beat=a=16
+        } else { a?8 =={ a=eq_beat a?8 <{ eq_beat=a=8 } } }
+    } }
+
+    // --- 2. melody: channel 1 pitch -> slot bump, noise attack -> flash ---
+    a=mus_v1 a&15 y=a c+ a-eq_pv1 eq_pv1=y
+    >={ a?4 >={
+        a=mus_c1 a&15 a?8 =={ a=eq_beat a?12 <{ eq_beat=a=12 } }
+    } }
+    a=mus_v1 a&15 a<< a<< tmp2=a
+    a=mus_f1 a&31 x=a a=EqAudfSlot,x tmp1=a
+    eq_bump
+
+    // --- per-frame values used by every slot ---
+    a=eq_kick a>> c- a+eq_base eq_lvladd=a               // radius base + pump
+    x=eq_mode a=EqModeSpeed,x c- a+eq_phase
+    c- a+eq_kick eq_phase=a                             // spin + kick jolt
+    a>> a>> eq_th0=a
+    a>> a>> a>> a>> eq_hoff=a                           // hue drifts with rotation
+    a=eq_beat a>> a>> a&0x0E tmp2=a                     // 0/2/4 luminance flash
+    a=eq_beat a?5 <{ a=0 } else {                       // background flash from black:
+        a?12 <{ a=0 } else { a=2 }                      //   beat 16..12 -> hue|2, 11..5 -> hue|0
+        x=eq_mode a|EqBgHue,x
+    }
+    eq_bg=a
+    FxFadeLevel a?4 <{ eq_bg=a=0 }                      // black while (mostly) faded out
+    FxFadeLevel a<< a<< a<< a<< eq_flvl=a
+    c- a+tmp2 eq_lumadd=a                               // one add per colour in eq_slot
+}
+
+
+// ---------------------------------------------------------------------------
+//  Per-slot geometry + colours (vertical blank)
+// ---------------------------------------------------------------------------
+
+// X = slot. ~200 cycles, so it is a func called from two loops (overscan + vblank)
+func eq_slot {
+    // radius level 0..15 = EnScale[gain][energy] + base + kick -> pointer to EqSin row
+    a=eq_en,x c- a+eq_gain y=a a=EnScale,y
+    c- a+eq_lvladd a?16 >={ a=15 } y=a
+    a=EqPLo,y ptrC=a a=EqPHi,y ptrC+1=a
+
+    // angle = phase/4 + slot*4 (one full turn over the 16 slots)
+    a=x a<< a<< c- a+eq_th0 a&63 tmp3=a y=a
+    a=(ptrC),y tmp4=a                                   // strand A x
+
+    // strand hues
+    a=x c- a+eq_hoff a&15 a|eq_hueofs y=a a=EqHue,y ptrD=a   // strand A (section palette)
+    a=EqHue+8,y ptrD+1=a                                // strand B (opposite colour)
+
+    // front / back luminance (+ beat flash, faded)
+    y=tmp3 a=EqLumF,y c- a+eq_lumadd y=a a=EqFadeLum,y tmp2=a
+    y=tmp3 a=EqLumB,y c- a+eq_lumadd y=a a=EqFadeLum,y tmp1=a
+
+    // cos(angle) > 0 -> strand A in front (drawn by P0)
+    a=tmp3 c- a+16 a&32 =={
+        a=tmp4                  eq_x0,x=a
+        a=[EQ_CENTER*2] c+ a-tmp4 eq_x1,x=a
+        a=tmp2 a|ptrD   eq_c0,x=a
+        a=tmp1 a|ptrD+1 eq_c1,x=a
+    } else {
+        a=[EQ_CENTER*2] c+ a-tmp4 eq_x0,x=a
+        a=tmp4                  eq_x1,x=a
+        a=tmp2 a|ptrD+1 eq_c0,x=a
+        a=tmp1 a|ptrD   eq_c1,x=a
+    }
+}
+
+// first slots - in overscan, after eq_music
+inline eq_update_top {
+    x=0 { eq_slot x++ x?[EQ_SPLIT] }!=
+}
+
+// remaining slots - in vblank
+inline eq_update {
+    x=[EQ_SPLIT] { eq_slot x++ x?[EQ_SLOTS] }!=
+    // fully faded -> black (hue|0 would still be a dark colour)
+    a=eq_flvl =={
+        x=31 { eq_c0,x=a x-- }>=0
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+//  Kernel: 16 slots x 14 lines (pos P0, pos P1, HMOVE, 10 orb lines, clear)
+// ---------------------------------------------------------------------------
+
+// A = x position (0..159). One line each; fixed-register versions leave X free,
+// so the next position can wait in X (the generic indexed version was too slow:
+// PosObject + loading the next x overflowed 76 cycles for x > ~130).
+// Timing = the classic PosObject (sta.wx HMP0,X + sta RESP0,X = 9 cycles; here
+// sta abs 4 + *2 + sta zp 3), which puts the player's left pixel exactly at A.
+// Worst case (x=145): the line ends at cycle 68 (+ a=x c+ wsync = 75).
+inline PosP0 {
+    nocross {
+        c+ wsync
+        { a-15 }>=                              // coarse: 15 px (5 cycles) per loop
+        a^7 a<< a<< a<< a<< hp0h=a *2 rp0=a      // fine: remainder -> HMP0, strobe RESP0
+    }
+}
+inline PosP1 {
+    nocross {
+        c+ wsync
+        { a-15 }>=
+        a^7 a<< a<< a<< a<< hp1h=a *2 rp1=a
+    }
+}
+
+inline eq_kernel {
+    ptrA+1=a=&>EqOrbs ptrB+1=a                  // (the music player uses ptrA/ptrB as scratch)
+    tmp1=a=0
+    {
+        y=tmp1 a=eq_x0,y x=eq_x1,y PosP0        // line 1 (P1 position waits in X)
+        a=x PosP1                               // line 2
+        wsync hmove=a                           // line 3: apply fine motion
+        y=tmp1
+        a=eq_c0,y cp0=a a&1 a<< a<< a<< a<< ptrA=a   // shape: big/small by colour bit0
+        a=eq_c1,y cp1=a a&1 a<< a<< a<< a<< ptrB=a
+        y=[ORB_H-1]
+        nocross {
+            {                                   // lines 4..13
+                wsync
+                gp0=a=(ptrA),y                  // 5+3
+                gp1=a=(ptrB),y                  // 5+3 -> both written inside HBLANK
+                y--
+            }>=0
+        }
+        wsync gp0=gp1=a=0                       // line 14
+        tmp1++ a=tmp1 a?[EQ_SLOTS]
+    }!=
+}
+
+
+// ---------------------------------------------------------------------------
+//  Effect entry point
+// ---------------------------------------------------------------------------
+func eqsine {
+    ctpf=a=0x00 cbg=a=0x00 cpf=a=0x00 pf0=pf1=pf2=a=0x0 gp0=gp1=a=0
+    // black 8 px frame on both sides (PF0 bits 4-5, reflected): hides the HMOVE
+    // "comb" (8 black pixels at the left edge of every slot's HMOVE line) on the
+    // coloured background. Players have priority over the playfield.
+    pf0=a=0x30 ctpf=a=0x01
+    ns0=ns1=a=0 rep0=rep1=a vdp0=vdp1=a
+    x=0x4F { eq_x0,x=a x-- }>=0                 // clear 80-CF
+    eq_beat=a eq_kick=a eq_pv0=a eq_pv1=a eq_base=a eq_gain=a
+    eq_mode=a=0xFF                              // force "section change" on the first frame
+    FxStart
+    goto eqsine_enter                           // called from overscan: start at vblank
+    {
+        sync1                                   // --- overscan ---
+            far song_player                     // also fills mus_v0/f0/v1/f1
+            BreakOnSeq
+            FxUpdate
+            eq_music                            // fake spectrum from what the player wrote
+            eq_update_top
+        eqsine_enter:                           // (first frame skips the overscan work - no time left)
+        sync2                                   // --- vblank ---
+            eq_update
+            cbg=a=eq_bg                         // (set during VBLANK -> whole picture is coloured)
+        sync3                                   // --- picture ---
+            eq_kernel
+    } always
+}

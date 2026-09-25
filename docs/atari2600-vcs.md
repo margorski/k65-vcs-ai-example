@@ -109,6 +109,28 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
 - **Two-line kernel**: update different registers on alternate lines to fit the 76-cycle budget.
 - Tables indexed per line should be `align 256` or `nocross` so `abs,x` never takes +1 cycle.
 - Use `*N` for exact delays, `%` for a 3-cycle nop, `gp0h`/`cp0h` (TIA mirrors) for +1 cycle writes.
+  Same trick for RAM: `var v_h = 0x100 + v` reads RAM through its mirror as absolute (+1 cycle),
+  e.g. `x?pl_end_h` = CPX abs (4 cycles) instead of CPX zp (3) to hit an exact line length.
+- **Chunky 2D colour grid / plasma** (`effects/plasma.k65`): rewrite COLUBK mid-line.
+  `lda (ptr_i),y` + `sta COLUBK` = 8 cycles = 24 px per cell -> 7 cells per line (~53 visible cycles).
+  A write lands at pixel ~ 3*cycle - 68 (cycle counted from the end of WSYNC).
+  Keep `ptr_lo + Y <= 255` so `(zp),y` never crosses a page (constant 5 cycles).
+  Shifting every second line by 4 cycles (12 px) = brick dithering, doubles perceived resolution.
+  A 2-line kernel can end line B without WSYNC if it is exactly 76 cycles (branch lands at cycle 0).
+- **Sprite multiplexing** (`effects/eqsine.k65`): split the screen into slots; per slot spend
+  1 line per object on `PosObject` (A = x 0..159, X = object; `c+ wsync { a-15 }>= a^7 a<<x4
+  hp0h,x=a rp0,x=a`, inside `nocross`), then `wsync hmove=a`, then draw. 14-line slots
+  (2 pos + 1 hmove + 10 draw + 1 clear) x 16 = 224 lines -> 32 objects from P0+P1.
+  Don't write HMxx within 24 cycles after HMOVE. HMOVE blanks the first 8 pixels of its line
+  (the "comb"): invisible on black, ugly on a coloured background - hide it with a black playfield
+  frame: `pf0=a=0x30 ctpf=a=1 cpf=a=0` (PF0 bits 4-5 = pixels 0-7, reflected -> also 152-159),
+  zero kernel cost, players are drawn over the playfield. P0 always has priority over P1 - assign
+  the "front" object to P0 per slot for 3D depth. Colour bit0 is ignored by TIA - usable as a flag.
+- **Music reactivity**: TIA gives no spectrum, but the player knows what it plays: copy AUDVx/AUDFx
+  to RAM each frame. AUDF (pitch divider) -> band, AUDV -> energy (spread to neighbours, decay per
+  frame), a jump of the summed volume -> beat trigger.
+- **Fades**: put 8 luminance-scaled copies of a colour table in consecutive pages and select the page
+  via the pointer high byte - zero extra kernel cost.
 
 ## Bankswitching (as done by K65 `system_a2600.nut`)
 

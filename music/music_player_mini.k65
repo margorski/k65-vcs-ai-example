@@ -87,15 +87,15 @@ func song_player {
 	player_prep_pointers
 	player_fetch_volume
 	!={
-		av0=a
+		av0=a mus_v0=a				// mus_*: copies for music-reactive effects
 	} else {
 		// channel 1 play through
 		x=songpos_seq
 		a=SongSeq1,x
 		player_prep_pointers
-		player_fetch_volume		av0=a
+		player_fetch_volume		av0=a mus_v0=a
 	}
-	player_fetch_freq_wave  af0=a ac0=x
+	player_fetch_freq_wave  af0=a mus_f0=a ac0=x mus_c0=x
 
 
 		x=songpos_seq
@@ -103,15 +103,15 @@ func song_player {
 		player_prep_pointers
 		player_fetch_volume
 		!={
-			av1=a
+			av1=a mus_v1=a
 		} else {
 			// channel 3 play through
 			x=songpos_seq
 			a=SongSeq3,x
 			player_prep_pointers
-			player_fetch_volume		av1=a
+			player_fetch_volume		av1=a mus_v1=a
 		}
-		player_fetch_freq_wave	af1=a ac1=x
+		player_fetch_freq_wave	af1=a mus_f1=a ac1=x mus_c1=x
 	
 	// next tick/step/pattern
 	x=songpos_tick x++

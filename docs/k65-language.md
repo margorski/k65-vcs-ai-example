@@ -54,6 +54,10 @@ data   name { ... }        // bytes (see 5)
   `far goto label` - far jump. Never put `far` inside an inline used from another bank.
 - `call addr` = raw `JSR addr`, `goto label` = JMP, `goto (ptr)` = JMP indirect.
   `goto main` crashes the compiler - put a label (`.full_reset:`) at the top of main and jump to it.
+  Jumping into the middle of a loop is fine: `goto fx_enter  { ... fx_enter: ... } always`
+  (use a global label if a `far` call sits between the goto and the label).
+- A `var` above `0xFF` (e.g. `0x19E`, RAM mirror) is always addressed as absolute (+1 cycle) -
+  handy for exact cycle padding.
 - Sections are only linked if referenced (dead code is dropped). `-keep name` in files.lst forces it.
 - Section options (right after `{`): `align 256`, `align 256+8`, `address 0xF800`, and for
   data also `nocross` (whole block inside one 256-byte page).
@@ -172,7 +176,9 @@ Functions: `sin cos asin acos sqrt pow floor ceil round frac min max clamp(x,lo,
 `color(r,g,b)` (0..1 floats -> nearest palette value, PAL palette), `color(0xRRGGBB)`,
 `print(msg)`, `error(msg)`, `size(section)`, `addbyte(sec,b)`, `index(tab,x[,y])`.
 
-Gotchas: `||` does not parse (the grammar uses `&&` for both levels - avoid logical OR, use `|`
+Gotchas: **`<0` and `>=0` are lexed as branch operators even inside `[ ]`** - `q<0 ? ..` crashes
+the compiler, write `q < 0` (with spaces). Single letters `a x y s c d i o` (any case) are registers/flags,
+never use them as label/var names (`data A {..}` = syntax error). `||` does not parse (the grammar uses `&&` for both levels - avoid logical OR, use `|`
 or `?:`). Negative results are fine in data (`& 0xFF` -> two's complement). Constants are floats:
 `x/256` is a real division - use `floor()` when you need integers.
 

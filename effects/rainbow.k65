@@ -6,8 +6,11 @@
 //  and is additionally wobbled by a sine table, so the rainbow flows
 //  up the screen with a smooth "breathing" motion.
 //
-//  Per-scanline kernel cost: WSYNC + LDA abs,x + STA + INX + DEY + BNE
-//  = ~16 cycles of 76 - plenty of room for more effects later.
+//  The table has 8 pages = 8 fade levels, the kernel reads it through a
+//  pointer (lda (rb_ptr),y) so fading in/out only changes the pointer high byte.
+//
+//  Per-scanline kernel cost: WSYNC + LDA (zp),y + STA + INY + DEX + BNE
+//  = ~17 cycles of 76 - plenty of room for more effects later.
 // ============================================================================
 
 [ RAINBOW_LINES = 228 ]     // scanlines drawn by the kernel (visible window is 230, see _defs.k65)
@@ -18,6 +21,7 @@
 var rb_phase = 0x80;        // linear scroll position, +1 per frame
 var rb_wave  = 0x81;        // sine table index, +1 per frame
 var rb_start = 0x82;        // first table index for the current frame
+var rb_ptr[2] = 0x83;       // -> current fade page of RainbowColors
 
 // Rainbow colour table, generated at compile time by the evaluator.
 // The 256 entries are split into 12 bands (~21 scanlines each), one per PAL hue.
@@ -25,13 +29,16 @@ var rb_start = 0x82;        // first table index for the current frame
 //   band i<6  -> hue 2+2*i       band i>=6 -> hue 25-2*i
 // Inside a band the luminance follows a half sine 2..A, so every band is a
 // shaded bar and neighbouring bands blend into one smooth rainbow.
-// The table is exactly 256 bytes, so wrapping the X index is seamless.
+// Each page is exactly 256 bytes, so wrapping the Y index is seamless.
+// 8 pages: page f = fade level f (luminance scaled by f/7, 0 -> black).
 data RainbowColors {
-    align 256       // indexed with ,x across the whole page - keep it page aligned
-    for x=0..255 eval [
-        band = floor( x*RAINBOW_HUES/256 ),
-        pos  = frac ( x*RAINBOW_HUES/256 ),
-        (band<6 ? 2+2*band : 25-2*band)*16 + (floor( 2 + 8*sin(pos*pi) ) & 0x0E)
+    align 256       // pointer lo byte = 0 -> (ptr),y never crosses a page
+    for x=0..2047 eval [
+        fade = floor( x/256 ),
+        band = floor( (x%256)*RAINBOW_HUES/256 ),
+        pos  = frac ( (x%256)*RAINBOW_HUES/256 ),
+        lum  = floor( (2 + 8*sin(pos*pi)) * fade/7 ),
+        lum<2 ? 0 : (band<6 ? 2+2*band : 25-2*band)*16 + (lum & 0x0E)
     ]
 }
 
@@ -48,31 +55,35 @@ inline rainbow_update {
     a=RainbowWobble,x                   // A = wobble offset
     c- a+rb_phase                       // A = wobble + scroll (wraps at 256 = seamless)
     rb_start=a
+    FxFadeLevel c- a+&>RainbowColors rb_ptr+1=a    // fade page
 }
 
 // Visible area kernel - one colour per scanline
 inline rainbow_kernel {
-    x=rb_start
-    y=[RAINBOW_LINES]
+    y=rb_start
+    x=[RAINBOW_LINES]
     {
         wsync                           // wait for start of scanline (HBLANK)
-        cbg=a=RainbowColors,x           // 4+3 cycles - done well inside HBLANK
-        x++
-        y--
+        cbg=a=(rb_ptr),y                // 5+3 cycles - done well inside HBLANK
+        y++
+        x--
     }!=
     wsync
     cbg=a=0                             // black below the effect / in overscan
 }
 
-// Effect entry point - called from main, returns when the song reaches seqbrk
+// Effect entry point - called from main, returns after FIRE/SELECT + fade out
 func rainbow {
     ctpf=a=0x00 cbg=a=0x00 cpf=a=0x00 pf0=pf1=pf2=a=0x0 gp0=gp1=a=0
-    rb_phase=a=0 rb_wave=a
-
+    rb_phase=a=0 rb_wave=a rb_ptr=a     // rb_ptr lo = 0 (page aligned table)
+    FxStart
+    goto rainbow_enter              // we are called from overscan: start at vblank
     {
         sync1                           // --- overscan (bottom border) ---
             far song_player             // music lives in bank "audio"
             BreakOnSeq                  // return to main when song position >= seqbrk
+            FxUpdate                    // button -> fade out -> return to main
+        rainbow_enter:
         sync2                           // --- VSYNC + vertical blank (top border) ---
             rainbow_update
         sync3                           // --- visible picture ---

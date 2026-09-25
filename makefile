@@ -28,9 +28,10 @@ $(ROM): $(SOURCES)
 run: $(ROM)
 	$(STELLABIN) $(STELLAFLAGS) $(ROM)
 
-# headless timing check: lines per frame + background colours -> bin/frames.png
+# headless check: 300 frames, FIRE at frames 60 and 160 (rainbow -> plasma -> eqsine),
+# every frame must be 312 lines; frames 30/140/290 rendered -> bin/frames.png
 check: $(ROM)
-	uv run --quiet --with py65 --with pillow tools/vcs_frame_check.py $(ROM) --frames 8 --png bin/frames.png
+	uv run --quiet --with py65 --with pillow tools/vcs_frame_check.py $(ROM) --frames 300 --press 60,160 --show 30,140,290 --png bin/frames.png
 
 clean:
 	rm -f bin/demo.bin bin/demo.gmap bin/demo.lst bin/demo.sym bin/frames.png

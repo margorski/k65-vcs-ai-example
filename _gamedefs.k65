@@ -1,13 +1,15 @@
 // === RAM Map ===
 //
 //			x0		x1		x2		x3		x4		x5		x6		x7		x8		x9		xA		xB		xC		xD		xE		xF
-//	8x		rbph    rbwv    rbst    -       -       -       -       -       -       -       -       -       -       -       -       -
-//	9x		-       -       -       -       -       -       -       -		-		-		-		-		-		-		-		-	
+// 80-CF are per-effect (only one effect runs at a time):
+//   rainbow 80-84, plasma 88-9E, eqsine 80-CF (x0[16] x1[16] c0[16] c1[16] energy[16])
+//	8x		rbph    rbwv    rbst    rbptr   rbptr   -       -       -       plptr   plptr   plptr   plptr   plptr   plptr   plptr   plptr
+//	9x		plptr   plptr   plptr   plptr   plptr   plptr   plp1    plp2    plt1    plt2    pltcol  plk1    plzoom  plcnt   plend   -
 //	Ax		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-			 
 //	Bx		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		
 //	Cx		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-			 
-//	Dx		-	    -	    -	    -   	-		-		-		-		-		-		-		-		-		-		-		-		 
-//	Ex		tmp1	tmp2	tmp3	tmp4	ptrC	ptrC	ptrD	ptrD	-		-		-		-		-		-		-		-
+//	Dx		fxfade  fxstat  btnprv  musc0   musc1   eqmode  eqbase  eqgain  eqkick  eqpv0   -       -       musv0   musf0   musv1   musf1
+//	Ex		tmp1	tmp2	tmp3	tmp4	ptrC	ptrC	ptrD	ptrD	eqph	eqbeat	eqhoff	eqlvla	eqluma	eqth0	eqflvl	eqhue
 //	Fx		sseq     sstep  stick	sbrq    ptrA	ptrA	ptrB	ptrB	STACK	STACK	STACK	STACK	STACK	STACK	STACK	STACK
 
 // preallocate all banks
@@ -37,3 +39,7 @@ var songpos_seq = 0xF0;
 var songpos_step = 0xF1;
 var songpos_tick = 0xF2;
 var seqbrk = 0xF3
+
+// last values written by the music player to AUDV0/AUDF0/AUDV1/AUDF1/AUDC0/AUDC1 (for music-reactive effects)
+var mus_v0 = 0xDC, mus_f0, mus_v1, mus_f1;
+var mus_c0 = 0xD3, mus_c1;

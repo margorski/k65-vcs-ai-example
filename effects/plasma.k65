@@ -1,0 +1,183 @@
+// ============================================================================
+//  Plasma
+//
+//  Classic sum-of-sines plasma:   colour = Palette[ X(col) + Y(row) ]
+//    X(col) = CxA[p1 + col*zoom] + CxB[p2 + col*CXB_STEP] + palette_cycle
+//    Y(row) = RyA[t1 - row]      + RyB[t2 + row]
+//  Every term has its own phase/speed, the horizontal frequency "breathes"
+//  (zoom) and the palette cycles - so the pattern never repeats visibly.
+//
+//  VCS has no frame buffer, so the grid is raced on the fly:
+//  7 columns per scanline by rewriting COLUBK mid-line every 8 cycles
+//      lda (pl_ptr+2*i),y  sta COLUBK        ; pl_ptr+2*i = &Palette[X(i)]
+//  and Y = Y(row) computed once per 2-line row. Pointer low bytes are 0..127
+//  and Y <= 127, so (ptr),y never crosses a page => fixed 5 cycles.
+//  Line B of every row is shifted 4 cycles (12 px) left: "brick" dithering that
+//  visually doubles the horizontal resolution.
+//
+//  The palette has 8 pages = 8 fade levels (0 = black ... 7 = full), so fading
+//  is just changing the pointer high bytes.
+//
+//  Keep the waves low-frequency: neighbouring columns/rows should differ by a few
+//  palette steps only (a band is 16 steps), otherwise the plasma turns into noise.
+//
+//  Lives in its own bank (bank2) - called with `far plasma` from main.
+// ============================================================================
+
+bank bank2;
+
+[ PLASMA_ROWS = 113 ]       // 2 lines each -> 226 lines (+1 final wsync) < 229 line picture timer
+[ CXB_STEP    = 9 ]         // column step of the second horizontal wave
+[ PAL_PERIOD  = 128 ]       // palette cycle length (must be 128: index math relies on it)
+
+// RAM (see _gamedefs.k65 RAM map)
+var pl_ptr[14] = 0x88;      // 7 column pointers into PlasmaPal (lo = X(col), hi = fade page)
+var pl_p1   = 0x96;         // phase of horizontal wave A
+var pl_p2   = 0x97;         // phase of horizontal wave B
+var pl_t1   = 0x98;         // phase of vertical wave A (= X register start in kernel)
+var pl_t2   = 0x99;         // phase of vertical wave B
+var pl_tcol = 0x9A;         // palette cycling offset
+var pl_k1   = 0x9B;         // current horizontal zoom (column step of wave A)
+var pl_zoom = 0x9C;         // zoom oscillator phase
+var pl_cnt  = 0x9D;         // kernel: running index for vertical wave B
+var pl_end  = 0x9E;         // kernel: X value that ends the loop
+var pl_end_h = 0x19E;       // same byte through the RAM mirror -> CPX abs = 4 cycles (timing pad)
+
+
+// ---------------------------------------------------------------------------
+//  Tables (all page aligned; 256-entry tables use whole sine periods so the
+//  8-bit index wraps seamlessly)
+// ---------------------------------------------------------------------------
+
+// Palette: 128 colours = 8 hue bands x 16 steps, luminance is a half sine 0..A
+// inside each band -> glossy "tubes" with dark edges (PAL lum > A looks pastel). Hue path (PAL): 2 4 6 8 C D 9 5 (warm->cool->back).
+// 2048 bytes = 8 fade pages x (128 colours repeated twice, so ptr_lo + Y <= 254 never wraps).
+data PlasmaPal {
+    align 256
+    for x=0..2047 eval [
+        fade = floor(x/256),
+        i    = x % PAL_PERIOD,
+        band = floor(i/16),
+        pos  = (i%16 + .5)/16,
+        hue  = band<4 ? 2+2*band : (band==4 ? 12 : (band==5 ? 13 : (band==6 ? 9 : 5))),
+        lum  = floor( (1 + 10*sin(pos*pi)) * fade/7 ),
+        fade==0 ? 0 : hue*16 + (lum & 0x0E)
+    ]
+}
+
+// Vertical waves (0..63 each; sum + carry <= 127)
+data PlasmaRyA {
+    align 256
+    for x=0..255 eval [ (sin(x/256*pi*2)*.5+.5)*63 ]
+}
+data PlasmaRyB {
+    align 256
+    for x=0..255 eval [ (sin(x/256*pi*2*2 + 1.3)*.5+.5)*63 ]
+}
+
+// Horizontal waves (0..63 each)
+data PlasmaCxA {
+    align 256
+    for x=0..255 eval [ (sin(x/256*pi*2)*.5+.5)*63 ]
+}
+data PlasmaCxB {
+    align 256
+    for x=0..255 eval [ (sin(x/256*pi*2 + 2.1)*.5+.5)*63 ]
+}
+
+// Zoom oscillator: column step of wave A, 3..15
+data PlasmaZoom {
+    align 256
+    for x=0..255 eval [ 9 + sin(x/256*pi*2)*6 ]
+}
+
+
+// ---------------------------------------------------------------------------
+//  Per-frame update (vertical blank)
+// ---------------------------------------------------------------------------
+inline plasma_update {
+    // animate phases - every term moves at a different speed/direction
+    pl_p1++ pl_p1++                         // horizontal A: +2
+    a=pl_p2 c+ a-3 pl_p2=a                  // horizontal B: -3
+    pl_t1++                                 // vertical A: +1 (scrolls up)
+    a=pl_t2 c- a+2 pl_t2=a                  // vertical B: +2
+    a=pl_tcol c- a+2 a&0x7F pl_tcol=a       // palette cycling (full cycle ~1.3 s)
+    x=pl_zoom pl_zoom++
+    a=PlasmaZoom,x pl_k1=a                  // breathing horizontal zoom
+
+    // fade page -> high byte of all column pointers
+    FxFadeLevel c- a+&>PlasmaPal tmp3=a
+
+    // 7 column pointers: lo = (CxA[p1 + i*k1] + CxB[p2 + i*CXB_STEP] + tcol) & 0x7F
+    tmp1=a=pl_p1
+    tmp2=a=pl_p2
+    x=0
+    {
+        y=tmp1 a=PlasmaCxA,y
+        y=tmp2 c- a+PlasmaCxB,y
+        c- a+pl_tcol a&0x7F
+        pl_ptr,x=a
+        pl_ptr+1,x=a=tmp3
+        a=tmp1 c- a+pl_k1 tmp1=a
+        a=tmp2 c- a+[CXB_STEP] tmp2=a
+        x++ x++ x?14
+    }!=
+}
+
+
+// ---------------------------------------------------------------------------
+//  Kernel (visible area) - cycle counted, cycle numbers are "after WSYNC"
+// ---------------------------------------------------------------------------
+
+// 7 x (5+3) = 56 cycles, one colour change every 8 cycles = 24 pixels
+inline plasma_columns {
+    a=(pl_ptr   ),y cbg=a
+    a=(pl_ptr+2 ),y cbg=a
+    a=(pl_ptr+4 ),y cbg=a
+    a=(pl_ptr+6 ),y cbg=a
+    a=(pl_ptr+8 ),y cbg=a
+    a=(pl_ptr+10),y cbg=a
+    a=(pl_ptr+12),y cbg=a
+}
+
+inline plasma_kernel {
+    x=pl_t1
+    a=pl_t1 c+ a-[PLASMA_ROWS] pl_end=a     // loop ends when X reaches pl_t1-ROWS
+    pl_cnt=a=pl_t2
+    wsync
+    nocross {
+        {
+            // ---- line A ----                                 cycle
+            y=pl_cnt  a=PlasmaRyB,y  a+PlasmaRyA,x  y=a     //  0..13  Y = row value
+            plasma_columns                                  // 13..69  writes end at 21,29..69
+            wsync                                           // 69..72  -> halt to 76
+            // ---- line B (shifted 4 cycles left) ----
+            x-- pl_cnt++ *2                                 //  0..9
+            plasma_columns                                  //  9..65  writes end at 17,25..65
+            *4 x?pl_end_h                                   // 65..73  (CPX abs via RAM mirror)
+        }!=                                                 // 73..76  -> next line A at cycle 0
+    }
+    wsync
+    cbg=a=0
+}
+
+
+// ---------------------------------------------------------------------------
+//  Effect entry point
+// ---------------------------------------------------------------------------
+func plasma {
+    ctpf=a=0x00 cbg=a=0x00 cpf=a=0x00 pf0=pf1=pf2=a=0x0 gp0=gp1=a=0
+    FxStart
+    goto plasma_enter               // we are called from overscan: start at vblank
+    {
+        sync1                           // --- overscan ---
+            far song_player
+            BreakOnSeq
+            FxUpdate                    // button -> fade out -> return to main
+        plasma_enter:
+        sync2                           // --- vblank ---
+            plasma_update
+        sync3                           // --- picture ---
+            plasma_kernel
+    } always
+}
