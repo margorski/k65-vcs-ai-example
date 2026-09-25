@@ -24,6 +24,15 @@
 //  3. Drums (channel 0) - volume attack with AUDC 15 = kick -> pump (+radius
 //     on all slots), rotation jolt, flash; AUDC 8 noise attack = hat -> small flash.
 //
+//  Scanner (playfield, behind the orbs - players have priority over the PF):
+//    a full-width line sweeping down the helix, its position computed from the
+//    song position (step/tick), so it stays locked to the music:
+//      CALM, BREAK: 1 sweep per 2 patterns (3.5 s), FULL: 1 per pattern (1.76 s),
+//      BUILD: 2 per pattern. Kick -> it hops up (half the kick pump) and glides
+//      back; hats/kicks -> brighter for a moment. Colour = the section's
+//      background hue brightened. It is cut to the background width (8..151):
+//      on its lines COLUBK = black and PF0 lights only pixels 8-15 (+ mirrored).
+//
 //  3D: P0 is always the orb in front (P0 has priority over P1): the strands
 //  swap sprites when they pass behind each other, front = brighter + bigger
 //  orb shape, back = darker + smaller. Each strand keeps its own hue.
@@ -89,6 +98,13 @@ data EqModeSpeed {              2      3      1      7     }   // rotation, 1/4 
 //              (vs blues/cyans) (neutral for rainbow) (vs reds/purples) (complement of gold)
 // Black most of the time; kicks / hats / section changes flash it: hue|2 -> hue|0 -> black.
 data EqBgHue {  0x60            0xB0                0x50                0xC0  }
+
+// Scanner per section:           CALM   FULL   BREAK  BUILD
+data EqScanSpeed {                 0      1      0      2    }  // 0 = 1 sweep / 2 patterns, 1 = 1 / pattern, 2 = 2 / pattern
+
+// Scanner position 0..79 (16 slots x 5 orb-line pairs) -> slot / orb row (9 7 5 3 1)
+data EqScanSlot { for x=0..79 eval [ floor(x/5) ] }
+data EqScanRow  { for x=0..79 eval [ 9 - 2*(x%5) ] }
 
 // Melody pitch -> slot 1..14. AUDF values the song really uses on channel 1
 // (5 7 10 13 14 15 17 18 20 21 24 27 29) are spread evenly, others go to the nearest.
@@ -310,6 +326,30 @@ inline eq_update {
 //  Kernel: 16 slots x 14 lines (pos P0, pos P1, HMOVE, 10 orb lines, clear)
 // ---------------------------------------------------------------------------
 
+// Scanner parameters for the kernel (vblank, after eq_update) - in scratch bytes:
+//   ptrC = scanner slot, ptrC+1 = scanner orb row, ptrD = scanner colour
+inline eq_scan_prep {
+    // q = position within the song pattern: step*5 + min(tick,4) = 0..79
+    a=songpos_step a<< a<< c- a+songpos_step tmp2=a
+    a=songpos_tick a?5 >={ a=4 } c- a+tmp2 tmp2=a
+
+    // section speed
+    x=eq_mode
+    y=EqScanSpeed,x =={                             // slow: (q + 80*(seq&1)) / 2
+        a=songpos_seq a&1 !={ a=[80] } c- a+tmp2 a>>
+    } else {
+        y?2 =={ a<< a?80 >={ c+ a-80 } }            // fast: 2*q mod 80 (normal: q)
+    }
+
+    // kick: hop up by half the kick pump (FULL ~14 lines, BREAK ~22), glide back as it decays
+    tmp2=a a=eq_kick a>> tmp3=a a=tmp2 c+ a-tmp3 <{ a=0 }
+    y=a a=EqScanSlot,y ptrC=a a=EqScanRow,y ptrC+1=a
+
+    // colour: the section's background hue, brightened (lum 8, +2/+4 flash on kicks/hats)
+    a=eq_beat a>> a>> a&0x0E c- a+EqBgHue,x a|0x08 ptrD=a
+    FxFadeLevel a?7 <{ ptrC=a=0xFF }                // no scanner during fades (slot never matches)
+}
+
 // A = x position (0..159). One line each; fixed-register versions leave X free,
 // so the next position can wait in X (the generic indexed version was too slow:
 // PosObject + loading the next x overflowed 76 cycles for x > ~130).
@@ -330,7 +370,8 @@ inline PosP1 {
         a^7 a<< a<< a<< a<< hp1h=a *2 rp1=a
     }
 }
-
+// Kernel: 16 slots x 14 lines = 224 lines (picture timer ~229)
+//   slot: pos P0 | pos P1 | HMOVE + colours | 10 orb lines (in pairs, for the scanner) | clear
 inline eq_kernel {
     ptrA+1=a=&>EqOrbs ptrB+1=a                  // (the music player uses ptrA/ptrB as scratch)
     tmp1=a=0
@@ -341,18 +382,28 @@ inline eq_kernel {
         y=tmp1
         a=eq_c0,y cp0=a a&1 a<< a<< a<< a<< ptrA=a   // shape: big/small by colour bit0
         a=eq_c1,y cp1=a a&1 a<< a<< a<< a<< ptrB=a
+        x=0xFF a=tmp1 a?ptrC =={ x=ptrC+1 } tmp2=x   // scanner row in this slot (0xFF = none)
         y=[ORB_H-1]
-        nocross {
-            {                                   // lines 4..13
-                wsync
-                gp0=a=(ptrA),y                  // 5+3
-                gp1=a=(ptrB),y                  // 5+3 -> both written inside HBLANK
-                y--
-            }>=0
-        }
-        wsync gp0=gp1=a=0                       // line 14
-        tmp1++ a=tmp1 a?[EQ_SLOTS]
-    }!=
+        {                                       // lines 4..13, in pairs
+            wsync                               // even line
+            gp0=a=(ptrA),y
+            gp1=a=(ptrB),y
+            a=eq_bg tmp3=a a=0 x=a              // next line: no scanner (PF off, normal background)
+            y?tmp2 =={ tmp3=a a=0xFF x=ptrD }   // scanner: PF on, its colour, black background
+            y--
+            wsync                               // odd line
+            pf1=a pf2=a a^0x30 pf0=a cpf=x      // PF0: 0x30 black frame / 0xCF scanner px 8-15
+            a=tmp3 cbg=a                        // (all written before the beam gets there, cycle 20)
+            gp0=a=(ptrA),y
+            gp1=a=(ptrB),y
+            y--
+        }>=0
+        wsync a=0 cpf=a pf1=a pf2=a             // line 14: clear scanner, orbs
+        a=eq_bg cbg=a a=0x30 pf0=a
+        a=0 gp0=a gp1=a
+        tmp1++ a=tmp1 a?[EQ_SLOTS] =={ goto eq_kernel_done }
+    } always
+    eq_kernel_done:
 }
 
 
@@ -365,7 +416,7 @@ func eqsine {
     // "comb" (8 black pixels at the left edge of every slot's HMOVE line) on the
     // coloured background. Players have priority over the playfield.
     pf0=a=0x30 ctpf=a=0x01
-    ns0=ns1=a=0 rep0=rep1=a vdp0=vdp1=a
+    ns0=ns1=a=0 rep0=rep1=a vdp0=vdp1=a em0=em1=a eb=a
     x=0x4F { eq_x0,x=a x-- }>=0                 // clear 80-CF
     eq_beat=a eq_kick=a eq_pv0=a eq_pv1=a eq_base=a eq_gain=a
     eq_mode=a=0xFF                              // force "section change" on the first frame
@@ -381,6 +432,7 @@ func eqsine {
         eqsine_enter:                           // (first frame skips the overscan work - no time left)
         sync2                                   // --- vblank ---
             eq_update
+            eq_scan_prep                        // scanner position/colour
             cbg=a=eq_bg                         // (set during VBLANK -> whole picture is coloured)
         sync3                                   // --- picture ---
             eq_kernel

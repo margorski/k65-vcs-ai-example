@@ -3,12 +3,14 @@
 Atari 2600 (VCS) demo written in **K65** - a custom 6502 assembler with its own, very
 non-standard syntax (`a=5 cbg=a`, `{ ... }!=` loops, `x?10 >={ }` conditions).
 Do not write DASM/ca65 syntax here. Target: **PAL**, 312 lines/frame, 32K F4 ROM.
-Effects (FIRE or SELECT switches, with fade out/in):
+Effects (FIRE or SELECT switches, with fade out/in). **Currently only eqsine is enabled** -
+rainbow and plasma are commented out in `main.k65` (code kept, the linker drops unreferenced sections):
 - `effects/rainbow.k65` (bank core) - scrolling, sine-wobbled rainbow background
 - `effects/plasma.k65` (bank bank2) - 7x113 sum-of-sines plasma raced with mid-line COLUBK writes
 - `effects/eqsine.k65` (bank bank3) - music-reactive double helix: 32 orbs from 2 multiplexed sprites;
   section choreography (table from `tools/song_analysis.py`), melody pitch -> bulge position,
-  kick -> pump/spin/flash (reads `mus_*` copies of AUDV/AUDF/AUDC written by the player)
+  kick -> pump/spin/flash (reads `mus_*` copies of AUDV/AUDF/AUDC written by the player),
+  section-coloured flashing background, playfield scanner line (speed per section, hops on kicks)
 
 ## Knowledge base - read before editing K65 code
 

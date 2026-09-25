@@ -42,8 +42,8 @@ main {
     init                      // clear ZP RAM + TIA, stack = 0xFF
     seqbrk=a=0xFF             // BreakOnSeq never fires (song loops) - effects end on button
     {
-        rainbow               // effect in the same bank: plain call
-        far plasma            // effect in another bank: far call
+        // rainbow            // effect in the same bank: plain call (currently disabled)
+        // far plasma         // effect in another bank: far call (currently disabled)
         far eqsine
     } always
 }
@@ -117,8 +117,9 @@ Note the player uses `ptrA`/`ptrB` as scratch - re-set any effect pointers kept 
 1. `make` - must end with `All OK.`; a silent exit 139 after `Compiling file: X` = syntax error in X.
 2. `make check` - every frame must be **312** lines (PAL), including the effect switch frames.
 3. Look at `bin/frames.png` (Read tool can display it): rendered background of selected frames,
-   mid-line COLUBK writes included (pixel = 3*cycle-68) + players P0/P1 (RESP/HMOVE/GRP/COLUP/NUSIZ size).
-   Not simulated: playfield, missiles, ball, VDEL, sprite copies.
+   mid-line COLUBK writes included (pixel = 3*cycle-68), playfield (PF0-2, reflect), players P0/P1
+   and missiles M0/M1 (RES/HM/HMOVE/GRP/ENAM/COLUP/NUSIZ size). Not simulated: ball, score mode,
+   PF priority, VDEL, sprite copies. TIA writes are timed at the end of the instruction.
    `--press a,b` holds FIRE for 3 frames at those frames, `--show x,y` picks rendered frames.
 4. Inspect `bin/demo.lst` to confirm generated 6502 code / cycle counts of the kernel loop.
 5. The user runs `make run` for the real picture + sound.

@@ -28,7 +28,7 @@ $(ROM): $(SOURCES)
 run: $(ROM)
 	$(STELLABIN) $(STELLAFLAGS) $(ROM)
 
-# headless check: 300 frames, FIRE at frames 60 and 160 (rainbow -> plasma -> eqsine),
+# headless check: 300 frames, FIRE at frames 60 and 160 (effect switch = fade out/in),
 # every frame must be 312 lines; frames 30/140/290 rendered -> bin/frames.png
 check: $(ROM)
 	uv run --quiet --with py65 --with pillow tools/vcs_frame_check.py $(ROM) --frames 300 --press 60,160 --show 30,140,290 --png bin/frames.png

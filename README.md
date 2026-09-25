@@ -18,8 +18,14 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
    - **melodia**: wysokość nuty -> położenie garbu (chodzi góra-dół z melodią),
    - **stopa** (AUDC 15): pompowanie całej helisy, szarpnięcie obrotu, błysk; hi-haty: mały błysk,
    - **tło** w kolorze sekcji, kontrastowym do helisy (bordo / granat / ciemna zieleń / fiolet),
-     delikatnie pulsujące na stopie i hi-hatach; czarna ramka z playfieldu po bokach zakrywa
-     "grzebień" HMOVE.
+     błyskające od czerni na stopie i hi-hatach; czarna ramka z playfieldu po bokach zakrywa
+     "grzebień" HMOVE,
+   - **skaner** – pozioma linia z playfieldu (kule przelatują przed nią) zjeżdżająca w dół w takt
+     utworu: w spokojnych sekcjach i breakdownach 1 przebieg na 2 wzory, w głównych 1 na wzór,
+     w build-upach 2 na wzór; na stopie podskakuje w górę, hi-haty i stopy ją rozjaśniają.
+
+**Obecnie włączony jest tylko efekt 3 (EQ Sine)** – tęcza i plazma są zakomentowane w `main.k65`
+(kod zostaje; żeby je włączyć, wystarczy odkomentować linie).
 
 **Sterowanie:** FIRE (joystick 0) lub SELECT – płynne wygaszenie i przejście do następnego efektu.
 W Stelli: spacja = FIRE, F1 = SELECT.
@@ -47,7 +53,7 @@ make clean
 - `util.k65` – m.in. `FxStart`/`FxUpdate`/`FxFadeLevel`: przycisk + fade in/out
 - `main.k65`, `_defs.k65`, `_gamedefs.k65`, `util.k65`, `music/` – jak w szablonie
 - `docs/` – skrócona wiedza o K65 i Atari 2600 (kontekst dla AI), `CLAUDE.md` – punkt wejścia dla AI
-- `tools/vcs_frame_check.py` – prosty emulator 6502 + TIA (tło, sprite'y) mierzący timing i renderujący klatki
+- `tools/vcs_frame_check.py` – prosty emulator 6502 + TIA (tło, playfield, sprite'y, missile) mierzący timing i renderujący klatki
 - `tools/song_analysis.py` – odtwarza cały utwór bez GUI i wypisuje cechy każdej sekcji (głośność, ataki, barwy)
 
 Różnice względem szablonu: `make` tylko buduje (nie uruchamia), Stella dostaje parametry z linii
