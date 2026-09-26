@@ -14,6 +14,10 @@
 //  A point goes to the slot whose dot line is nearest to its y (next nearest if
 //  taken, dropped if the band is full).
 //
+//  Colour and base rotation speed follow the song mood (sections as in EQ Sine):
+//  calm = blue/slow, breakdown = red/slow, full = green/faster, build-up = purple/fastest
+//  (the speed glides to the new value in ~1-2 s).
+//
 //  Depth: points on the far side go to P1/M1 (dim band colour), near ones to
 //  P0/M0/BL (bright) - the generator marks them in bit 7 of the x byte.
 //
@@ -44,8 +48,14 @@ inline sph_music {
     a=sp_pulse !={ sp_pulse-- }
     a=sp_boost !={ c+ a-2 <{ a=0 } sp_boost=a }  // surge fades in ~16 frames
 
-    // position += SPH_SPEED + boost*4 (8.8 fixed point, wraps at SPH_FRAMES)
-    a=sp_boost a<< a<< c- a+[SPH_SPEED] tmp1=a
+    // base speed glides (1/256 per frame) towards the speed of the current song mood
+    x=songpos_seq y=SphSongMode,x
+    a=SphModeShape,y sp_shape=a                     // shape for the next frame's points
+    a=SphModeSpeed,y
+    a?sp_speed !={ <{ sp_speed-- } else { sp_speed++ } }
+
+    // position += base speed + boost*4 (8.8 fixed point, wraps at SPH_FRAMES)
+    a=sp_boost a<< a<< c- a+sp_speed tmp1=a
     a=0 a+0 tmp2=a                                  // carry -> +1 frame
     a=sp_frac c- a+tmp1 sp_frac=a
     a=sp_frame a+tmp2
@@ -58,12 +68,16 @@ inline sph_points {
     a=sp_pulse a>> a>> tmp1=a                       // scale level 0..3
     a>> c- a+&>SphScaleA ptrD+1=a
     a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
-    // bank + frame in bank
-    x=0 a=sp_frame
-    { a?[SPH_FPB] < break c+ a-[SPH_FPB] x++ } always
-    y=a a>> a>> c- a+&>SphAnimA ptrC+1=a            // + frame/4 pages
-    a=y a>>> a>>> a>>> a&0xC0 ptrC=a                // (frame&3)*64 - frames are 64 bytes (padded)
-    x?1 <{ far sph_proc5 } else { x?1 =={ far sph_proc6 } else { far sph_proc7 } }
+    a=sp_shape !={
+        far shape_proc2                             // cube: vertex shape in bank2
+    } else {
+        // sphere: bank + frame in bank
+        x=0 a=sp_frame
+        { a?[SPH_FPB] < break c+ a-[SPH_FPB] x++ } always
+        y=a a>> a>> c- a+&>SphAnimA ptrC+1=a        // + frame/4 pages
+        a=y a>>> a>>> a>>> a&0xC0 ptrC=a            // (frame&3)*64 - frames are 64 bytes (padded)
+        x?1 <{ far sph_proc5 } else { x?1 =={ far sph_proc6 } else { far sph_proc7 } }
+    }
 }
 
 
@@ -115,6 +129,8 @@ func sphere {
     ns0=ns1=a=0x10                              // missiles 2 px, players 1 copy
     a=0 x=[0x4F] { sp_bx,x=a x-- }>=0           // clear 80-CF
     sp_pv0=a sp_pv1=a sp_i=a
+    sp_speed=a=[SPH_SPEED]
+    a=0 sp_shape=a
     FxStart
     goto sphere_enter                           // called from overscan: start at vblank
     {
@@ -126,8 +142,8 @@ func sphere {
             sph_points
         sphere_enter:
         sync2                                   // --- vblank ---
-            FxFadeLevel a<< a<< a<< a<< a<< c- a+&<SphCol sp_colp=a     // level * 32
-            a=&>SphCol sp_colp+1=a
+            FxFadeLevel a<< a<< a<< a<< a<< sp_colp=a                    // level * 32 (SphCol page aligned)
+            x=songpos_seq a=SphSongMode,x c- a+&>SphCol sp_colp+1=a     // page = song mood
             sp_tmin=a=[SPH_TMIN_BLANK]           // ...and finish them (last thing before the
             sph_points                          //  picture: the time check covers everything)
         sync3                                   // --- picture ---

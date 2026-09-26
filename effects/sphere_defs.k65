@@ -11,7 +11,8 @@ bank bank4;
 [ SPH_FRAMES = 132, SPH_FPB = 44 ]
 [ SPH_NB = 15, SPH_TOP = 30 ]   // bands, blank lines above the dot area
 [ SPH_CX = 80, SPH_CY = 82 ]    // centre: pixel / line within the dot area
-[ SPH_SPEED = 0x60 ]        // base speed in 1/256 animation frames per video frame
+[ SPH_SPEED = 0x40 ]        // speed at effect start (1/256 animation frames per video frame),
+                            //  then it glides to SphModeSpeed of the current song mood
 // Points are processed wherever CPU time is left, one running index for the frame:
 // below the sphere (still in the picture, the CPU is idle there) -> overscan -> vblank.
 // Before every point the routine checks the RIOT timer and stops early when fewer than
@@ -25,6 +26,7 @@ bank bank4;
 // Fixed addresses of the tables in banks 5-7 (same in every bank, see gen_sphere.py)
 var SphAnimA = 0xF100, SphScaleA = 0xFC00, SphLineBand = 0xFE00;
 var SphCandBase = 0xFEA8, SphCandOff = 0xFEE4, SphLineCand = 0xFF20;
+var ShpAnimA = 0xF100, ShpPairA = 0xFA00, ShpPairB = 0xFA40;   // vertex-shape banks
 [ SPH_BACKROWS = 30 ]       // back points use candidate rows 5-9 (5 rows x 6)
 
 // RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
@@ -39,14 +41,36 @@ var sp_pv0   = 0xD5;        // previous volumes (attack detection)
 var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
 var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
+var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[mood])
+var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube
 
-// Band colours (top -> bottom: light from above), 8 fade levels x 32:
-// [0..15] front (bright, P0/M0/BL), [16..31] back (6 luminance steps darker, P1/M1)
+// Band colours (top -> bottom: light from above). One 256-byte page per song mood
+// (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple.
+// Inside a page: 8 fade levels x 32 = [0..15] front (bright, P0/M0/BL),
+// [16..31] back (6 luminance steps darker, P1/M1).
 data SphCol {
     align 256
-    for x=0..255 eval [ lvl = floor(x/32), b = x%16, back = floor(x/16)%2,
+    for x=0..1023 eval [ mood = floor(x/256), lvl = floor((x%256)/32), b = x%16, back = floor(x/16)%2,
+        hue = mood==0 ? 0xB0 : (mood==1 ? 0x50 : (mood==2 ? 0x60 : 0xA0)),
         lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
-        lvl==0 ? 0 : (lum < 0 ? 0x90 : 0x90 + (lum & 14)) ]
+        lvl==0 ? 0 : (lum < 0 ? hue : hue + (lum & 14)) ]
+}
+
+// Base rotation speed per song mood (1/256 animation frames per video frame; 132 frames = 1 turn)
+//                  CALM   FULL   BREAK  BUILD
+data SphModeSpeed { 0x40   0x80   0x50   0xC0 }
+
+// Shape per song mood:      CALM    FULL    BREAK   BUILD
+data SphModeShape {         1       0       0       0 }     // 0 sphere, 1 cube
+                            // planned: FULL = pyramid, BUILD = diamond (sphere until they exist)
+
+// Song mood per sequence position (copy of EqSongMode from eqsine.k65 - that one lives in
+// bank3 and can't be read from here): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
+data SphSongMode {
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2
+    3 3 3 3 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2
+    2 2 2 2 0 0 0 0 3 3 3 3 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
 }
 
 
@@ -54,30 +78,58 @@ data SphCol {
 //  Point routine - instantiated in banks 5-7 by sphere_data.k65 (sph_proc5..7)
 //  in:  ptrC = animation frame, ptrD = scale table, sp_i = next point (x2), sp_tmin
 // ---------------------------------------------------------------------------
+// Scale + place one point: tmp3 = x byte (offset+64, bit 7 = far side), tmp4 = y byte.
+// Picks the band and the nearest free object slot, stores the positioning value.
+inline sph_place {
+    a=tmp3 a&0x7F y=a a=(ptrD),y c- a+[SPH_CX] tmp1=a         // screen x
+    y=tmp4 a=(ptrD),y c- a+[SPH_CY] y=a                       // line in the dot area
+    a=SphLineBand,y tmp2=a                                    // band
+    a=tmp3 <0{                                                // candidate list: back points
+        a=SphLineCand,y c- a+[SPH_BACKROWS] x=a               //  prefer P1/M1 (dim colour),
+    } else {
+        x=SphLineCand,y                                       //  front ones P0/M0/BL (bright)
+    }
+    {
+        a=SphCandBase,x <0 break                              // band full: drop the point
+        c- a+tmp2 y=a
+        a=sp_bx,y =={                                         // free slot
+            a=tmp1 c+ a-SphCandOff,x sp_bx,y=a
+            break
+        }
+        x++
+    } always
+}
+
+// Sphere: every point is stored in the frame (2 bytes). sp_i = byte index.
 inline sph_body {
     {
-        a=sp_i a?[SPH_NPTS*2] == break                              // all points done
-        a=INTIM a?sp_tmin < break                                   // not enough time left here
-        y=sp_i a=(ptrC),y tmp3=a a&0x7F                             // bit 7 = far side
-        y=a a=(ptrD),y c- a+[SPH_CX] tmp1=a                         // screen x
-        y=sp_i y++ a=(ptrC),y y=a a=(ptrD),y c- a+[SPH_CY] y=a      // line in the dot area
-        a=SphLineBand,y tmp2=a                                      // band
-        a=tmp3 <0{                                                  // candidate list: back points
-            a=SphLineCand,y c- a+[SPH_BACKROWS] x=a                 //  prefer P1/M1 (dim colour),
-        } else {
-            x=SphLineCand,y                                         //  front ones P0/M0/BL (bright)
-        }
-        {
-            a=SphCandBase,x <0 break                                // band full: drop the point
-            c- a+tmp2 y=a
-            a=sp_bx,y =={                                           // free slot
-                a=tmp1 c+ a-SphCandOff,x sp_bx,y=a
-                break
-            }
-            x++
-        } always
+        a=sp_i a?[SPH_NPTS*2] =={ goto .done }                  // all points done
+        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
+        y=sp_i a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a
+        sph_place
         a=sp_i c- a+2 sp_i=a
+    } always                                                    // (loop too long for a branch:
+    .done:                                                      //  exits jump via goto)
+}
+
+// Vertex shapes (cube, ...): the frame holds only the rotated vertices (2 bytes each);
+// every drawn point is a vertex pair (ShpPairA/B = byte offsets in the frame, 0xFF ends
+// the list): a vertex is (i,i), an edge midpoint (i,j) - with orthographic projection the
+// midpoint on screen is just the average. Far side only if both ends are. sp_i = point.
+inline shape_body {
+    {
+        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
+        x=sp_i
+        y=ShpPairA,x <0{ goto .done }                           // end of the point list
+        a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a                 // vertex A
+        y=ShpPairB,x
+        a=(ptrC),y tmp1=a a&tmp3 a&0x80 tmp2=a                  // vertex B x, far only if both
+        a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
+        y++ a=(ptrC),y c- a+tmp4 a>> tmp4=a
+        sph_place
+        sp_i++
     } always
+    .done:
 }
 
 
