@@ -4,8 +4,8 @@
 //  30 points on a sphere rotating around X, Y and Z at once. The rotation is
 //  precomputed (tools/gen_sphere.py -> effects/sphere_data.k65, 132 frames in
 //  banks 5-7); at runtime the 6502 only picks the frame, scales it (pulse) and
-//  sorts the points into the kernel's object slots. The pyramid and the diamond are the
-//  exception: their rotation is computed live every frame (pyr_setup / dia_setup, sphere_defs.k65).
+//  sorts the points into the kernel's object slots. The cube, pyramid and diamond are the
+//  exception: their rotation is computed live every frame (cub_/pyr_/dia_setup, sphere_defs.k65).
 //
 //  Kernel: 15 bands of 11 lines. In every band all five objects are
 //  re-positioned (P0 P1 M0 M1 BL, one line each), one HMOVE line applies the
@@ -165,7 +165,8 @@ func sphere {
     sp_speed=a=[SPH_SPEED]
     a=0 sp_tt=a sp_sh=a sp_gr=a sp_ttype=a
     x=songpos_seq y=SphSongMode,x sph_target sp_shape=a     // start with the current shape
-    a?2 =={ far pyr_setupC } else { far dia_setup7 }   // live shapes: valid vertices from the start
+    a=64 dia_tx=a dia_ty=a dia_ux=a dia_uy=a dia_wx=a dia_wy=a  // live shapes: valid vertices (centre)
+                                                //  until the first rotation above the picture
     FxStart
     goto sphere_enter                           // called from overscan: start at vblank
     {
@@ -196,7 +197,7 @@ func sphere {
             TIM64T=a=[SPH_TOP_TIM]
             sph_music
             a=sp_shape a?3 =={ far dia_setup7 }       // live shapes: rotate the vertices
-            else { a?2 =={ far pyr_setupC } }
+            else { a?2 =={ far pyr_setupC } else { a?1 =={ far cub_setup2 } } }
             timwait wsync                       // = line SPH_TOP
             TIM64T=a=[SPH_BOT_TIM]              // re-armed for the rest of the picture: same end line,
             x=0                                 //  64-cycle units for the point phase below (armed

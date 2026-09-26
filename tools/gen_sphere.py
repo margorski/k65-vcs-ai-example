@@ -37,7 +37,9 @@ ADDR_PAIRA, ADDR_PAIRB = 0xFBA0, 0xFBD0     # vertex-shape banks: point list (<=
 SHAPE_FRAME = 16                            # max bytes per frame for vertex shapes (<= 8 vertices)
 
 S3 = 1 / math.sqrt(3)
-CUBE_V = [(x * S3, y * S3, z * S3) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
+# cube, rotated LIVE (cub_setup): vertex = S3 x (+-c0 +- c1 +- c2); ids 0..3 = A B C D, 4..7 = opposites
+CUBE_S = [(1, 1, 1), (1, 1, -1), (1, -1, 1), (-1, 1, 1)]
+CUBE_V = [tuple(k * S3 * v for v in s) for k in (1, -1) for s in CUBE_S]
 CUBE_E = [(i, j) for i in range(8) for j in range(i + 1, 8)
           if sum(a != b for a, b in zip(CUBE_V[i], CUBE_V[j])) == 1]
 # pyramid: apex + square base, rotated LIVE (pyr_setup): apex = matrix column 1, base centre = -apex/2,
@@ -60,17 +62,19 @@ DIA_SLANT = [(t, g) for t in (0, 3) for g in (1, 2, 4, 5)]
 DIA_AMP, DIA_AMP_G = 63, 39     # sin/cos amplitude (unit), girdle 0.62 x unit
 DIA_ZP = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6, 0xD8)  # RAM of T U W -T -U -W (x, y byte), sphere_defs.k65
 PYR_ZP = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6)        # apex, +P, +Q, -P, -Q
+CUB_ZP = (0xE4, 0xEC, 0xEE, 0xF4) * 2          # A B C D, then the opposites (negated while fetching)
 
 # shape name, bank, label suffix, frame stride (16; None = rotated live), vertices, points
 SHAPES = [
-    ("cube", "bank2", "2", 16, CUBE_V, verts_and_mids(8, CUBE_E)),
+    ("cube", "bank2", "2", None, CUBE_V, verts_and_mids(8, CUBE_E)),
     ("pyramid", "core", "C", None, PYR_V, verts_and_mids(5, PYR_BASE)       # slant edge: midpoint,
         + [p for a, b in PYR_SLANT for p in ((a, b, 0), (a, b, 1), (b, a, 1))]),  #  1/4 from each end
     ("diamond", "bank7", "7", None, DIA_V, verts_and_mids(6, DIA_GIRDLE)
         + [p for t, g in DIA_SLANT for p in ((t, g, 0), (g, t, 1))]),  # + 1/4 from the girdle to the tip
 ]
 
-LIVE = {"diamond": (DIA_ZP, "dia"), "pyramid": (PYR_ZP, "pyr")}
+LIVE = {"diamond": (DIA_ZP, "dia", DIA_AMP_G), "pyramid": (PYR_ZP, "pyr", DIA_AMP_G),
+        "cube": (CUB_ZP, "cub", round(DIA_AMP * S3))}
 
 # frame pointer code: ptrC = ShpAnimA + frame*stride
 PTR_CODE = {
@@ -200,11 +204,11 @@ def main():
 }}""")
 
 
-ADDR_LV = 0xF000    # live shapes' tables (LvSin/LvCos/LvSinG/LvCosG/LvSq, 655 B): fixed, same in bank7
-                    # and core; at the bank start, so the rest of bank7 up to the logo tables stays whole
+ADDR_LV = 0xF000    # live shapes' tables (LvSin, LvSinG, LvSq) + the multiply routine (LvMul): fixed,
+                    # same in every live-shape bank; at the bank start, so the rest stays whole
 
 
-def emit_live(name, bank_name, bank, pairs, zp, prefix, tables):
+def emit_live(name, bank_name, bank, pairs, zp, prefix, amp_g, tables):
     """Live vertex shape: no animation frames, the 6502 rotates it ({prefix}_setup / {prefix}_body
     in sphere_defs.k65). Point list = vertex ids: ShpPairA = id, ShpPairB = id / 0x80 lone vertex /
     0x40 quarter point (= the previous point, the midpoint of the same edge, averaged with vertex A
@@ -221,11 +225,9 @@ def emit_live(name, bank_name, bank, pairs, zp, prefix, tables):
             pb.append(0x20 | b)
     pa.append(0xFF)
     pb.append(0xFF)
-    ang = [2 * math.pi * i / FRAMES for i in range(FRAMES)]
+    ang = [2 * math.pi * i / FRAMES for i in range(FRAMES + FRAMES // 4)]   # cos(i) = sin(i + 33)
     lv = [[round(DIA_AMP * math.sin(t)) & 0xFF for t in ang],
-          [round(DIA_AMP * math.cos(t)) & 0xFF for t in ang],
-          [round(DIA_AMP_G * math.sin(t)) & 0xFF for t in ang],
-          [round(DIA_AMP_G * math.cos(t)) & 0xFF for t in ang],
+          [round(amp_g * math.sin(t)) & 0xFF for t in ang],
           # quarter squares: sq(|a+b|) - sq(|a-b|) = 4ab/126 = a*b*2/63 (double precision, |a|,|b| <= 63)
           [round(n * n / (4 * DIA_AMP / 2)) for n in range(2 * DIA_AMP + 1)]]
     print(f"\n// {name}: {len(pairs)} drawn points, rotation computed at runtime ({prefix}_setup)")
@@ -233,14 +235,15 @@ def emit_live(name, bank_name, bank, pairs, zp, prefix, tables):
     print(f"data ShpPairA{bank} {{\n    address 0x{ADDR_PAIRA:04X}\n{rows(pa)}\n}}")
     print(f"data ShpPairB{bank} {{\n    address 0x{ADDR_PAIRB:04X}\n{rows(pb)}\n}}")
     addr = ADDR_LV
-    for n, t in zip(("LvSin", "LvCos", "LvSinG", "LvCosG", "LvSq"), lv):
+    for n, t in zip(("LvSin", "LvSinG", "LvSq"), lv):
         print(f"data {n}{bank} {{\n    address 0x{addr:04X}\n{rows(t)}\n}}")
         addr += len(t)
+    print(f"func lv_mul{bank} {{\n    address 0x{addr:04X}\n    dia_mul\n}}   // = LvMul (call LvMul)")
     zpname = prefix.capitalize() + "Zp"
     print(f"data {zpname} {{ {' '.join(str(z) for z in zp)} }}   // vertex id -> its RAM (x byte, y byte)")
     emit_tables(bank, *tables)
-    refs = " ".join(f"a={n}{bank}" for n in ("ShpPairA", "ShpPairB", "LvSin", "LvCos", "LvSinG", "LvCosG",
-                                              "LvSq", "SphScale", "SphLineBand", "SphCandBase",
+    refs = " ".join(f"a={n}{bank}" for n in ("ShpPairA", "ShpPairB", "LvSin", "LvSinG", "LvSq", "lv_mul",
+                                              "SphScale", "SphLineBand", "SphCandBase",
                                               "SphCandOff", "SphLineCand"))
     print(f"""func {prefix}_setup{bank} {{                  // rotate the vertices (top of the picture)
     {prefix}_setup

@@ -157,7 +157,11 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
   negating the whole x byte (two's complement) negates x AND flips the flag. A pyramid is not
   symmetric: apex = column 1, base centre = -apex/2, corners = centre +- (G0 +- G2) - its corners
   need their real z (14 multiplies), and -corner = -apex - corner can be derived later from bytes.
-  Spare flag bits: bytes whose range is 1..127 have a free bit 7.
+  Spare flag bits: bytes whose range is 1..127 have a free bit 7. A cube = G(+-c0 +- c1 +- c2):
+  4 vertices + their negatives, and the 4th of those is A - B - C.
+  Code size: a subroutine that must exist in several banks can be placed at the same fixed
+  `address` in each (`func f { address 0xF1C9 ... }`) and called from shared inlines with
+  `call Var` (JSR to a var's address) - K65 has no multi-bank sections. Watch the stack depth.
 - **Re-arm the RIOT timer mid-frame** for finer phases: the picture's T1024T (1024-cycle units) is
   too coarse for "is there time for one more item?" checks. Overwrite it with TIM64T at a fixed
   point (start of a line, right after WSYNC) with a value that ends on the same line as before
