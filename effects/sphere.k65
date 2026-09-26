@@ -4,7 +4,8 @@
 //  30 points on a sphere rotating around X, Y and Z at once. The rotation is
 //  precomputed (tools/gen_sphere.py -> effects/sphere_data.k65, 132 frames in
 //  banks 5-7); at runtime the 6502 only picks the frame, scales it (pulse) and
-//  sorts the points into the kernel's object slots.
+//  sorts the points into the kernel's object slots. The diamond is the exception:
+//  its rotation matrix is computed live every frame (dia_setup, sphere_defs.k65).
 //
 //  Kernel: 15 bands of 11 lines. In every band all five objects are
 //  re-positioned (P0 P1 M0 M1 BL, one line each), one HMOVE line applies the
@@ -94,13 +95,14 @@ inline sph_music {
 
 // next points of the frame (from sp_i, while time is left) -> band slots
 inline sph_points {
+    a=sp_tt !={ a=sp_tmin c- a+[SPH_TMIN_TRANS] sp_tmin=a }   // transitions: slower points (grow loops)
     a=sp_pulse a>> a>> tmp1=a                       // scale level 0..3
     a>> c- a+&>SphScaleA ptrD+1=a
     a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
     a=sp_shape !={
         a?2 <{ far shape_proc2 }                    // cube: vertex shape in bank2
         else { a?2 =={ far shape_procC }            // pyramid: bank core
-               else { a?3 =={ far shape_proc7 }     // diamond: bank7
+               else { a?3 =={ far shape_proc7 }     // diamond: bank7, rotated live
                       else { far logo_proc7 } } }   // Atari logo: bank7
     } else {
         // sphere: 88 frames in banks 5-6 -> bank + frame in bank
@@ -125,9 +127,8 @@ inline SphDivM0 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm0h=a *2 rm0=a } }
 inline SphDivM1 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm1h=a *2 rm1=a } }
 inline SphDivBL { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hbh=a *2 rb=a } }
 
-// X = 0 all the time (the "off" value), Y = band
+// X = 0 all the time (the "off" value), Y = band. Starts on the first band line (SPH_TOP).
 inline sph_kernel {
-    x=[SPH_TOP] { wsync x-- }!=
     y=0
     {
         a=sp_bx0,y c+ wsync em1=x SphDivP0          // r0: P0 (preamble: M1 dot off)
@@ -164,6 +165,7 @@ func sphere {
     sp_speed=a=[SPH_SPEED]
     a=0 sp_tt=a sp_sh=a sp_gr=a sp_ttype=a
     x=songpos_seq y=SphSongMode,x sph_target sp_shape=a     // start with the current shape
+    far dia_setup7                              // live diamond: valid vertices from the start
     FxStart
     goto sphere_enter                           // called from overscan: start at vblank
     {
@@ -175,7 +177,10 @@ func sphere {
             sph_points
         sphere_enter:
         sync2                                   // --- vblank ---
-            FxFadeLevel
+            sp_tmin=a=[SPH_TMIN_BLANK]           // ...finish the points (the time check leaves
+            sph_points                          //  >= 449 cycles: enough for the colours below)
+            FxFadeLevel                         // band colours: after the points, which use
+                                                //  sp_colp as scratch (live diamond)
             x=sp_shape x?4 >={                      // logo with its back to the viewer: darker
                 x=sp_frame x?[SPH_FRAMES/4] >={ x?[SPH_FRAMES*3/4] <{   // cos < 0: 90..270 degrees
                     a?[SPH_LOGO_BACKDIM+1] >={ c+ a-[SPH_LOGO_BACKDIM] }
@@ -185,15 +190,20 @@ func sphere {
             x=songpos_seq a=SphSongMode,x x?[SPH_LOGO_SEQ] >={ a=[SPH_LOGO_PAGE] }
             x?[SPH_ALTAIR_SEQ_END] <{ a=[SPH_ALTAIR_PAGE] }                 // Altair: grey
             c- a+&>SphCol sp_colp+1=a                   // page = song mood (logo: Atari red)
-            sp_tmin=a=[SPH_TMIN_BLANK]           // ...and finish them (last thing before the
-            sph_points                          //  picture: the time check covers everything)
         sync3                                   // --- picture ---
-            x=0
-            sph_kernel
-            // below the sphere: ~34 idle lines before the picture timer ends -> start the next
-            // frame (the kernel has already read and cleared every band)
+            // the SPH_TOP blank lines above the dots: the next frame's music + animation step
+            // (+ the live diamond's rotation), timed by the RIOT timer instead of counted lines
+            TIM64T=a=[SPH_TOP_TIM]
             sph_music
-            sp_i=a=0 sp_tmin=a=[SPH_TMIN_PIC]
+            a=sp_shape a?3 =={ far dia_setup7 }
+            timwait wsync                       // = line SPH_TOP
+            TIM64T=a=[SPH_BOT_TIM]              // re-armed for the rest of the picture: same end line,
+            x=0                                 //  64-cycle units for the point phase below (armed
+            sph_kernel                          //  here, not after the kernel: a positioning line
+                                                //  can run long during explosions (x at the edge))
+            // below the sphere: ~34 idle lines -> the next frame's points (the kernel has
+            // already read and cleared every band)
+            sp_i=a=0 sp_tmin=a=[SPH_TMIN_BLANK]
             sph_points
     } always
 }

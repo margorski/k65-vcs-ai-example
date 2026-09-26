@@ -18,10 +18,15 @@ bank bank4;
 // Before every point the routine checks the RIOT timer and stops early when fewer than
 // sp_tmin units are left in the current phase; the next phase continues from there.
 // (Points still left at the end of vblank are simply not shown for that one frame.)
-[ SPH_TMIN_PIC = 2 ]        // picture phase: T1024T units (>= 1024 cycles left)
+[ SPH_TOP_TIM = 36 ]        // picture: TIM64T over the SPH_TOP lines (zero at line 29 cycle ~49),
+[ SPH_BOT_TIM = 238 ]       //  then from the first band line to the end of the picture (line 229 cycle
+                            //  ~46, as T1024T 18) - verify 312 lines after changing the kernel
 [ SPH_TMIN_BLANK = 8 ]      // overscan/vblank: TIM64T units (INTIM = n guarantees only >(n-1)*64 cycles:
-                            //  8 -> >= 449; worst point ~250 + return/bank switch ~50 -> 150 spare.
+                            //  8 -> >= 449; worst point ~400 (pyramid, live diamond) + return ~40.
                             //  6 was not enough in Stella: vblank ended with ~40 cycles left)
+[ SPH_TMIN_TRANS = 2 ]      // added during shape transitions: the explosion's range checks make
+                            //  the worst point ~470 cycles (measured; otherwise <= ~400, the live
+                            //  diamond included)
 
 // Fixed addresses of the tables in banks 5-7 (same in every bank, see gen_sphere.py)
 var SphAnimA = 0xF100, SphScaleA = 0xFC00, SphLineBand = 0xFE00;
@@ -49,6 +54,18 @@ var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = coll
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
 var sp_gr    = 0xEB;        // explosion level 0..4 (scale 2^level, points off-screen are dropped)
+
+// Live diamond: its 3 rotated base vertices (x byte = offset+64 | far side bit 7, y byte), computed
+// once per frame (picture phase) and kept until the frame's points are done. The bytes are borrowed:
+// ptrC and sp_lbase are not used by the diamond, ED-EF are free. (Opposite vertices = negated.)
+var dia_tx = 0xE4, dia_ty = 0xE5;   // tip T = rotation matrix column 1 (= ptrC)
+var dia_ux = 0xEC, dia_uy = 0xED;   // girdle U = 0.62 x column 0 (EC = sp_lbase)
+var dia_wx = 0xEE, dia_wy = 0xEF;   // girdle W = 0.62 x column 2
+var dia_sy = 0xF4, dia_cy = 0xF5, dia_cyg = 0xF6, dia_t = 0xF7;  // setup scratch (ptrA/ptrB)
+// the opposite vertices -T -U -W, recomputed at the start of every point phase (scratch that is
+// free during the points: ptrA/ptrB after the music player, sp_colp until the end of vblank)
+var dia_ntx = 0xF4, dia_nty = 0xF5, dia_nux = 0xF6, dia_nuy = 0xF7, dia_nwx = 0xD8, dia_nwy = 0xD9;
+var zp0 = 0x00, zp1 = 0x01;         // base for zero page indexed reads (a=zp0,x = RAM at x)
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
 // (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple,
@@ -219,3 +236,95 @@ inline shape_body {
 }
 
 
+
+
+// ---------------------------------------------------------------------------
+//  Live diamond (bank7): the rotation is computed on the 6502 every frame.
+//  Same rotation as the precomputed shapes (tools/gen_sphere.py rotate(), turns X/Y/Z 1/2/1):
+//  R = Rz(a) * Ry(2a) * Rx(a), a = frame * 2pi/132. The diamond's vertices are
+//  +-T (tip, column 1 of R), +-U, +-W (girdle, 0.62 x columns 0 and 2):
+//      U = 0.62 * ( cy*cz,  cy*sz,  -sy )
+//      T = ( sx*sy*cz - cx*sz,  sx*sy*sz + cx*cz,  sx*cy )
+//      W = 0.62 * ( cx*sy*cz + sx*sz,  cx*sy*sz - sx*cz,  cx*cy )
+//  sin/cos tables have amplitude 63 (DiaSinG/DiaCosG: 0.62 x 63 = 39) and products use quarter
+//  squares: sq(|a+b|) - sq(|a-b|) = 2ab/63 -> results in "double units" (126 = 1.0), which
+//  are exactly the screen scales: x px = v/4 (radius ~32), y lines = v/2 (radius 63).
+//  12 multiplies, ~900 cycles per frame. Max error vs the float rotation: 1 px / 2 lines.
+// ---------------------------------------------------------------------------
+inline dia_mul {        // A = tmp1 * tmp2 * 2/63 (|tmp1|,|tmp2| <= 63), uses Y, tmp3
+    a=tmp1 c- a+tmp2 <0{ a^0xFF c- a+1 } y=a a=DiaSq,y tmp3=a
+    a=tmp1 c+ a-tmp2 <0{ a^0xFF c- a+1 } y=a a=tmp3 c+ a-DiaSq,y
+}
+inline dia_half { a?0x80 a>>> a+0 }                     // A/2 rounded (carry = the lost bit)
+inline dia_ovf { <<={ <0{ a=0x7F } else { a=0x81 } } }  // after a sum: clamp on signed overflow
+inline dia_xb { a?0x80 a>>> a?0x80 a>>> a+64 }          // double units -> x byte: 64 + v/4 rounded
+inline dia_yb { dia_half a^0xFF c- a+65 }               // -> y byte: 64 - v/2 (screen y grows down)
+
+inline dia_setup {
+    a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
+    else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
+    y=a a=DiaSin,y dia_sy=a a=DiaCos,y dia_cy=a a=DiaCosG,y dia_cyg=a
+    x=sp_frame                                          // X and Z angle = frame (X stays = index)
+    // U: x = cy*cz, y = cy*sz, far side when z = -sy < 0 (sy > 0)
+    a=dia_cyg tmp1=a a=DiaCos,x tmp2=a dia_mul dia_xb tmp4=a
+    a=DiaSin,x tmp2=a dia_mul dia_yb dia_uy=a
+    a=0 c+ a-dia_sy a&0x80 a|tmp4 dia_ux=a
+    // T: t = sx*sy ; x = t*cz - cx*sz, y = t*sz + cx*cz, far when sx*cy < 0
+    a=DiaSin,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
+    tmp1=a a=DiaCos,x tmp2=a dia_mul tmp4=a
+    a=DiaCos,x tmp1=a a=DiaSin,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_xb tmp4=a
+    a=DiaSin,x a^dia_cy a&0x80 a|tmp4 dia_tx=a
+    a=dia_t tmp1=a a=DiaSin,x tmp2=a dia_mul tmp4=a
+    a=DiaCos,x tmp1=a tmp2=a dia_mul c- a+tmp4 dia_ovf dia_yb dia_ty=a
+    // W: t = cx*sy (x 0.62) ; x = t*cz + sx*sz, y = t*sz - sx*cz (sx x 0.62), far when cx*cy < 0
+    a=DiaCosG,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
+    tmp1=a a=DiaCos,x tmp2=a dia_mul tmp4=a
+    a=DiaSinG,x tmp1=a a=DiaSin,x tmp2=a dia_mul c- a+tmp4 dia_ovf dia_xb tmp4=a
+    a=DiaCos,x a^dia_cy a&0x80 a|tmp4 dia_wx=a
+    a=dia_t tmp1=a a=DiaSin,x tmp2=a dia_mul tmp4=a
+    a=DiaSinG,x tmp1=a a=DiaCos,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_yb dia_wy=a
+}
+
+// Opposite vertex: the x byte negated as a whole (-(64+x | back) = 64-x | the other side),
+// y byte = 128 - y. Computed per phase into dia_ntx.. (6 bytes, not kept between phases).
+inline dia_neg {
+    a=dia_tx a^0xFF c- a+1 dia_ntx=a a=dia_ty a^0xFF c- a+129 dia_nty=a
+    a=dia_ux a^0xFF c- a+1 dia_nux=a a=dia_uy a^0xFF c- a+129 dia_nuy=a
+    a=dia_wx a^0xFF c- a+1 dia_nwx=a a=dia_wy a^0xFF c- a+129 dia_nwy=a
+}
+// vertex id in Y (0..2 = T U W, 3..5 = -T -U -W) -> x byte, y byte (DiaZp = its RAM). Uses X.
+inline dia_fetch { x=DiaZp,y a=zp0,x tmp1=a a=zp1,x tmp2=a }    // -> tmp1, tmp2
+inline dia_fetch3 { x=DiaZp,y a=zp0,x tmp3=a a=zp1,x tmp4=a }   // -> tmp3, tmp4
+
+// tmp3/tmp4 = average of the point (tmp3/tmp4) and the vertex in tmp1/tmp2 (far only if both are)
+inline dia_avg {
+    a=tmp2 c- a+tmp4 a>> tmp4=a
+    a=tmp1 a&tmp3 a&0x80 tmp2=a
+    a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
+}
+
+// Point list = vertex ids: ShpPairA = vertex A, ShpPairB = vertex B (edge midpoint), 0x80 = lone
+// vertex, or 0x40 = quarter point: the PREVIOUS point (the midpoint of the same edge, still in
+// tmp3/tmp4 - sph_place only reads them) averaged with vertex A once more. When a phase starts
+// at a quarter point, that midpoint is rebuilt first (tmp3/tmp4 did not survive the break).
+inline dia_body {
+    x=sp_i y=ShpPairA,x <0{ goto .done }                        // (all points done)
+    dia_neg
+    a=ShpPairB,x a&0x40 =={ goto .loop }
+    x-- y=ShpPairA,x dia_fetch3 x=sp_i x-- y=ShpPairB,x dia_fetch dia_avg
+    .loop:
+    {
+        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
+        x=sp_i y=ShpPairA,x <0{ goto .done }                    // end of the point list
+        a=ShpPairB,x a&0x40 !={ dia_fetch goto .avg }           // quarter point
+        dia_fetch3                                              // vertex A
+        x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
+        y=a dia_fetch                                           // edge midpoint: + vertex B
+        .avg:
+        dia_avg
+        .place:
+        sph_place
+        sp_i++
+    } always
+    .done:
+}

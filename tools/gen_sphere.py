@@ -49,29 +49,28 @@ PYR_SLANT = [(0, k) for k in range(1, 5)]
 def verts_and_mids(nv, edges):
     return [(i, i, 0) for i in range(nv)] + [(a, b, 0) for a, b in edges]
 
-# diamond: elongated octahedron (apex top/bottom, 4 on the girdle)
-DIA_V = [(0, 1, 0), (0, -1, 0), (0.62, 0, 0), (0, 0, 0.62), (-0.62, 0, 0), (0, 0, -0.62)]
-DIA_GIRDLE = [(2, 3), (3, 4), (4, 5), (5, 2)]
-DIA_SLANT = [(t, g) for t in (0, 1) for g in range(2, 6)]
+# diamond: elongated octahedron (apex top/bottom, 4 on the girdle), rotated LIVE on the 6502:
+# its vertices are +-(columns of the rotation matrix), so only 3 are computed per frame
+# (tip T = column 1, girdle U = 0.62 x column 0, W = 0.62 x column 2); vertex id 3..5 = -(id-3)
+DIA_V = [(0, 1, 0), (0.62, 0, 0), (0, 0, 0.62), (0, -1, 0), (-0.62, 0, 0), (0, 0, -0.62)]
+DIA_GIRDLE = [(1, 2), (2, 4), (4, 5), (5, 1)]
+DIA_SLANT = [(t, g) for t in (0, 3) for g in (1, 2, 4, 5)]
+DIA_AMP, DIA_AMP_G = 63, 39     # sin/cos amplitude (unit), girdle 0.62 x unit
+DIA_ZP = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6, 0xD8)  # RAM of T U W -T -U -W (x, y byte), sphere_defs.k65
 
-# shape name, bank, label suffix, frame stride (16, or 12 for <= 6 vertices), vertices, points
+# shape name, bank, label suffix, frame stride (16; None = rotated live), vertices, points
 SHAPES = [
     ("cube", "bank2", "2", 16, CUBE_V, verts_and_mids(8, CUBE_E)),
     ("pyramid", "core", "C", 16, PYR_V, verts_and_mids(5, PYR_BASE + PYR_SLANT)
         + [(a, b, 1) for a, b in PYR_SLANT] + [(b, a, 1) for a, b in PYR_SLANT]),
-    ("diamond", "bank7", "7", 12, DIA_V, verts_and_mids(6, DIA_GIRDLE + DIA_SLANT)
-        + [(g, t, 1) for t, g in DIA_SLANT]),       # 1/4 from the girdle toward the tips
+    ("diamond", "bank7", "7", None, DIA_V, verts_and_mids(6, DIA_GIRDLE)
+        + [p for t, g in DIA_SLANT for p in ((t, g, 0), (g, t, 1))]),  # + 1/4 from the girdle to the tip
 ]
 
 # frame pointer code: ptrC = ShpAnimA + frame*stride
 PTR_CODE = {
     16: """    a=sp_frame a<< a<< a<< a<< ptrC=a
     a=sp_frame a>> a>> a>> a>> c- a+&>ShpAnimA ptrC+1=a""",
-    12: """    a=0 ptrC+1=a
-    a=sp_frame a<< ptrC+1<<<                        // 2f (16 bit)
-    c- a+sp_frame ptrC=a a=ptrC+1 a+0 ptrC+1=a      // 3f
-    ptrC<< ptrC+1<<< ptrC<< ptrC+1<<<               // 12f
-    a=ptrC+1 c- a+&>ShpAnimA ptrC+1=a               // + ShpAnimA (low byte 0)""",
 }
 
 # slot k = object: 0 P0, 1 P1, 2 M0, 3 M1, 4 BL - draws its dot on band line DOT0+k.
@@ -172,6 +171,9 @@ def main():
         print(f"func sph_proc{bank} {{\n    never {{ {refs} }}\n    sph_body\n}}")
 
     for name, bank_name, bank, stride, verts, pairs in SHAPES:
+        if stride is None:
+            emit_live_diamond(bank_name, bank, pairs, (scale, line_band, cbase, coff, line_cand))
+            continue
         assert len(verts) * 2 <= stride and len(pairs) < 64
         data = frames_of(verts, stride)
         assert len(data) <= ADDR_PAIRA - ADDR_ANIM
@@ -190,6 +192,41 @@ def main():
     never {{ {refs} }}
 {PTR_CODE[stride]}
     shape_body
+}}""")
+
+
+def emit_live_diamond(bank_name, bank, pairs, tables):
+    """Diamond: no animation frames, the 6502 rotates it (dia_setup / dia_body in sphere_defs.k65).
+    Point list = vertex ids: ShpPairA = id, ShpPairB = id / 0x80 lone vertex / 0x40 quarter point
+    (= the previous point, the midpoint of the same edge, averaged with vertex A once more)."""
+    for i, (a, b, q) in enumerate(pairs):
+        assert not q or (i and set(pairs[i - 1][:2]) == {a, b} and not pairs[i - 1][2])
+    pa = [a for a, b, q in pairs] + [0xFF]
+    pb = [0x40 if q else (0x80 if a == b else b) for a, b, q in pairs] + [0xFF]
+    ang = [2 * math.pi * i / FRAMES for i in range(FRAMES)]
+    trig = {"DiaSin": [round(DIA_AMP * math.sin(t)) & 0xFF for t in ang],
+            "DiaCos": [round(DIA_AMP * math.cos(t)) & 0xFF for t in ang],
+            "DiaSinG": [round(DIA_AMP_G * math.sin(t)) & 0xFF for t in ang],
+            "DiaCosG": [round(DIA_AMP_G * math.cos(t)) & 0xFF for t in ang]}
+    # quarter squares: sq(|a+b|) - sq(|a-b|) = 4ab/126 = a*b*2/63 (double precision, |a|,|b| <= 63)
+    sq = [round(n * n / (4 * DIA_AMP / 2)) for n in range(2 * DIA_AMP + 1)]
+    print(f"\n// diamond: {len(pairs)} drawn points, rotation computed at runtime (dia_setup)")
+    print(f"bank {bank_name};\n")
+    print(f"data ShpPairA{bank} {{\n    address 0x{ADDR_PAIRA:04X}\n{rows(pa)}\n}}")
+    print(f"data ShpPairB{bank} {{\n    address 0x{ADDR_PAIRB:04X}\n{rows(pb)}\n}}")
+    for n, t in trig.items():
+        print(f"data {n} {{\n{rows(t)}\n}}")
+    print(f"data DiaSq {{\n{rows(sq)}\n}}")
+    print(f"data DiaZp {{ {' '.join(str(z) for z in DIA_ZP)} }}   // vertex id -> its RAM (x byte, y byte)")
+    emit_tables(bank, *tables)
+    refs = " ".join(f"a={n}{bank}" for n in ("ShpPairA", "ShpPairB", "SphScale",
+                                              "SphLineBand", "SphCandBase", "SphCandOff", "SphLineCand"))
+    print(f"""func dia_setup{bank} {{                  // rotate the vertices (top of the picture)
+    dia_setup
+}}
+func shape_proc{bank} {{
+    never {{ {refs} }}
+    dia_body
 }}""")
 
 
@@ -240,8 +277,7 @@ def emit_logo():
     print(f"\n// logos: Atari {len(pts)} points, Altair {len(alt)} points (from index {altair_base}),"
           f" spin computed at runtime")
     print(f"bank {LOGO_BANK};\n")
-    # fixed addresses right after the diamond's frames (132 x 12 B = F100-F72F), so that
-    # big contiguous blocks stay free for the code of shape_proc7 and logo_proc7
+    # fixed addresses (F740-F8xx), so that big contiguous blocks stay free for the code
     print(f"data LogoSq {{\n    address 0xF740\n{rows(sq)}\n}}")
     print(f"data LogoCos {{\n    address 0xF7B0\n{rows(cos)}\n}}")
     print(f"data LogoX {{\n    address 0xF800\n{rows(lx)}\n}}")

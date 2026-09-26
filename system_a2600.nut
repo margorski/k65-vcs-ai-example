@@ -110,6 +110,11 @@ SUPERCHIP <- 0
 
 far_jump_stubs <- []
 
+// far-call stubs at fixed addresses (project addition): the sphere banks 5-6 are full except one
+// 256-byte block (F000-F0FF) that must stay whole for sph_procN - a stub placed by the allocator
+// could land in its middle. FFC5-FFEC is kept free in the sphere banks for these.
+FIXED_STUBS <- { sph_proc5 = 0xFFC5, sph_proc6 = 0xFFCF }
+
 
 
 // creates a bank with default parameters
@@ -151,6 +156,8 @@ function link_invoke_far_call( as_code, as_target_fn )
 		local as = sec_create();
 		sec_set_name( as, farname );
 		sec_set_type( as, "stub" );
+		if( func in FIXED_STUBS )
+			sec_set_fixaddr( as, FIXED_STUBS[func] );
 		sec_add_bank( as, bfrom );
 		sec_add_bank( as, bto );
 		sec_asm( as, farname );								// label

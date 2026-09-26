@@ -148,11 +148,27 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
   frame), a jump of the summed volume -> beat trigger.
 - **Fades**: put 8 luminance-scaled copies of a colour table in consecutive pages and select the page
   via the pointer high byte - zero extra kernel cost.
+- **Live 3D rotation on the 6502** (the sphere effect's diamond): signed multiply by quarter squares,
+  `a*b = sq(|a+b|) - sq(|a-b|)` with one table (`sq(n) = n*n/126` for values -63..63 gives 2ab/63, i.e.
+  double precision - scale the table so the result unit equals what you need next). A rotation matrix
+  = 12 such multiplies (~1000 cycles). Rotate only what you must: an octahedron's vertices ARE the
+  matrix columns (+-), so 3 vertices are computed and the opposite ones are negated; edge points are
+  vertex averages (orthographic projection). Keep x/y as bytes offset by 64 with a flag in bit 7:
+  negating the whole x byte (two's complement) negates x AND flips the flag.
+- **Re-arm the RIOT timer mid-frame** for finer phases: the picture's T1024T (1024-cycle units) is
+  too coarse for "is there time for one more item?" checks. Overwrite it with TIM64T at a fixed
+  point (start of a line, right after WSYNC) with a value that ends on the same line as before
+  (zero around the middle of the line: 64-cycle granularity vs a 76-cycle line), e.g. once for the
+  blank lines above the picture (do work there instead of counting WSYNCs) and once more at the
+  first kernel line (not after the kernel: a kernel line that runs long would shift the end).
 
 ## Bankswitching (as done by K65 `system_a2600.nut`)
 
 - Each `bank` is 4 KB mapped at `0xF000`. 1 bank = 4K, 2 = F8 (8K), 3-4 = F6 (16K), 5-8 = F4 (32K).
 - Hotspots: bank n selected by touching `__banksel_<bank>` (0x1FF8, 0x1FF9, 0x1FF6, ... see .nut).
 - The linker puts a reset stub + vectors in every bank, so power-on bank does not matter.
-- `far func` generates `__far_<from>_<to>__func` stubs (BIT hotspot, JSR, BIT back, RTS).
+- `far func` generates `__far_<from>_<to>__func` stubs (BIT hotspot, JSR, BIT back, RTS). A stub
+  lives in BOTH banks at the same address, wherever the allocator finds room - it can land in the
+  middle of a bank's only big free block. This project's `.nut` pins chosen stubs (`FIXED_STUBS`:
+  sph_proc5/6 at FFC5/FFCF) with `sec_set_fixaddr`.
 - This project pre-allocates 8 banks -> 32 KB F4 ROM (`-bs F4` in Stella).

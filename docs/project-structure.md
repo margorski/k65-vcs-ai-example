@@ -18,7 +18,7 @@ k65-vcs-ai-example/
 ├── music/               tracker-style player (music_player_mini.k65) + song data, in bank "audio"
 ├── tools/vcs_frame_check.py   headless timing checker + frame renderer (py65 via uv)
 ├── tools/song_analysis.py     plays the whole song headless, prints per-section audio features
-├── tools/gen_sphere.py        precomputes the sphere rotation -> effects/sphere_data.k65
+├── tools/gen_sphere.py        precomputes the sphere/shape rotation + live-diamond tables -> sphere_data.k65
 ├── docs/                this knowledge base
 └── bin/                 build output: demo.bin (32K F4), demo.lst, demo.sym, demo.gmap, frames.png
 ```
@@ -86,7 +86,8 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0x80-0xCF` eqsine (`eq_x0/x1/c0/c1/en[16]`), `0xE8-0xEF` eqsine state; during the frame
   eqsine reuses the scratch bytes `0xE1-0xE7` + `0xEE` for scanner/ball/spark kernel parameters
 - (`0x80-0xCF` is shared per-effect scratch: every effect initialises what it uses)
-- `0x80-0xCF`, `0xD5-0xD9` sphere (5 x 15 band positions + animation/music state)
+- `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` sphere (5 x 15 band positions + animation/music state);
+  live diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` + `0xD8-0xD9`
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)
