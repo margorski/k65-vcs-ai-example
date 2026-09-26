@@ -33,7 +33,7 @@ ADDR_ANIM, ADDR_SCALE = 0xF100, 0xFC00
 # (keep 0xFFC5-0xFFEC free: far-call stubs must sit at the same address in bank4 and here)
 ADDR_BAND, ADDR_CBASE, ADDR_COFF, ADDR_CAND = 0xFE00, 0xFEA8, 0xFEE4, 0xFF20
 ADDR_PAIRA, ADDR_PAIRB = 0xFA00, 0xFA40     # vertex-shape banks: point list (vertex byte offsets)
-SHAPE_FRAME = 16                            # bytes per frame for vertex shapes (<= 8 vertices)
+SHAPE_FRAME = 16                            # max bytes per frame for vertex shapes (<= 8 vertices)
 
 S3 = 1 / math.sqrt(3)
 CUBE_V = [(x * S3, y * S3, z * S3) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
@@ -54,14 +54,25 @@ DIA_V = [(0, 1, 0), (0, -1, 0), (0.62, 0, 0), (0, 0, 0.62), (-0.62, 0, 0), (0, 0
 DIA_GIRDLE = [(2, 3), (3, 4), (4, 5), (5, 2)]
 DIA_SLANT = [(t, g) for t in (0, 1) for g in range(2, 6)]
 
-# shape name, bank, label suffix, vertices, drawn points
+# shape name, bank, label suffix, frame stride (16, or 12 for <= 6 vertices), vertices, points
 SHAPES = [
-    ("cube", "bank2", "2", CUBE_V, verts_and_mids(8, CUBE_E)),
-    ("pyramid", "core", "C", PYR_V, verts_and_mids(5, PYR_BASE + PYR_SLANT)
+    ("cube", "bank2", "2", 16, CUBE_V, verts_and_mids(8, CUBE_E)),
+    ("pyramid", "core", "C", 16, PYR_V, verts_and_mids(5, PYR_BASE + PYR_SLANT)
         + [(a, b, 1) for a, b in PYR_SLANT] + [(b, a, 1) for a, b in PYR_SLANT]),
-    ("diamond", "bank7", "7", DIA_V, verts_and_mids(6, DIA_GIRDLE + DIA_SLANT)
+    ("diamond", "bank7", "7", 12, DIA_V, verts_and_mids(6, DIA_GIRDLE + DIA_SLANT)
         + [(g, t, 1) for t, g in DIA_SLANT]),       # 1/4 from the girdle toward the tips
 ]
+
+# frame pointer code: ptrC = ShpAnimA + frame*stride
+PTR_CODE = {
+    16: """    a=sp_frame a<< a<< a<< a<< ptrC=a
+    a=sp_frame a>> a>> a>> a>> c- a+&>ShpAnimA ptrC+1=a""",
+    12: """    a=0 ptrC+1=a
+    a=sp_frame a<< ptrC+1<<<                        // 2f (16 bit)
+    c- a+sp_frame ptrC=a a=ptrC+1 a+0 ptrC+1=a      // 3f
+    ptrC<< ptrC+1<<< ptrC<< ptrC+1<<<               // 12f
+    a=ptrC+1 c- a+&>ShpAnimA ptrC+1=a               // + ShpAnimA (low byte 0)""",
+}
 
 # slot k = object: 0 P0, 1 P1, 2 M0, 3 M1, 4 BL - draws its dot on band line DOT0+k.
 # Depth: P0/M0/BL use the bright band colour (front of the sphere), P1/M1 the dim one (back).
@@ -160,9 +171,9 @@ def main():
         refs = " ".join(f"a={n}{bank}" for n in ("SphAnim", "SphScale", "SphLineBand", "SphCandBase", "SphCandOff", "SphLineCand"))
         print(f"func sph_proc{bank} {{\n    never {{ {refs} }}\n    sph_body\n}}")
 
-    for name, bank_name, bank, verts, pairs in SHAPES:
-        assert len(verts) * 2 <= SHAPE_FRAME and len(pairs) < 64
-        data = frames_of(verts, SHAPE_FRAME)
+    for name, bank_name, bank, stride, verts, pairs in SHAPES:
+        assert len(verts) * 2 <= stride and len(pairs) < 64
+        data = frames_of(verts, stride)
         assert len(data) <= ADDR_PAIRA - ADDR_ANIM
         pa = [2 * a for a, b, q in pairs] + [0xFF]
         pb = [2 * b + (0x40 if q else 0) for a, b, q in pairs] + [0xFF]   # bit 6 = quarter point
@@ -174,14 +185,52 @@ def main():
         emit_tables(bank, scale, line_band, cbase, coff, line_cand)
         refs = " ".join(f"a={n}{bank}" for n in ("ShpAnim", "ShpPairA", "ShpPairB", "SphScale",
                                                   "SphLineBand", "SphCandBase", "SphCandOff", "SphLineCand"))
-        # frame pointer: ShpAnimA + frame*16 ; point index from 0
+        # frame pointer: ShpAnimA + frame*stride ; point index from 0
         print(f"""func shape_proc{bank} {{
     never {{ {refs} }}
-    a=sp_frame a<< a<< a<< a<< ptrC=a
-    a=sp_frame a>> a>> a>> a>> c- a+&>ShpAnimA ptrC+1=a
+{PTR_CODE[stride]}
     shape_body
 }}""")
 
 
+# Atari "Fuji" logo, flat (z = 0), spinning around the vertical axis at runtime (bank7):
+# x = x0 * cos(angle) via quarter squares, y constant. 10 vertices, 3 points per segment.
+LOGO_V = [(-0.07, 1.0), (-0.07, -1.0), (0.07, 1.0), (0.07, -1.0),       # centre bar (2 columns)
+          (0.26, 1.0), (0.42, -0.25), (1.0, -1.0),                      # right prong
+          (-0.26, 1.0), (-0.42, -0.25), (-1.0, -1.0)]                   # left prong
+LOGO_SEG = [(0, 1), (2, 3), (4, 5), (5, 6), (7, 8), (8, 9)]
+LOGO_W = 1.2                        # logo is wider than the sphere radius
+LOGO_BANK = "bank7"
+
+
+def emit_logo():
+    pts = list(LOGO_V)
+    for a, b in LOGO_SEG:
+        (ax, ay), (bx, by) = LOGO_V[a], LOGO_V[b]
+        pts += [(ax + (bx - ax) * t, ay + (by - ay) * t) for t in (0.25, 0.5, 0.75)]
+    lx = [round(RX * LOGO_W * x) & 0xFF for x, y in pts]            # signed pixels
+    ly = [round(-RY * y) + 64 for x, y in pts]                      # y byte (offset + 64)
+    # cos(f) = cos(FRAMES - f): half a table, the 6502 mirrors the index
+    cos = [round(64 * math.cos(2 * math.pi * f / FRAMES)) & 0xFF for f in range(FRAMES // 2 + 1)]
+    sq = [n * n // 256 for n in range(105)]                         # quarter squares / 64, |x0+-c| <= 102
+    assert all(abs(round(RX * LOGO_W * x)) + 64 < 128 for x, y in pts)
+    print(f"\n// Atari logo: {len(pts)} points, spin computed at runtime")
+    print(f"bank {LOGO_BANK};\n")
+    # fixed addresses right after the diamond's frames (132 x 12 B = F100-F72F), so that
+    # big contiguous blocks stay free for the code of shape_proc7 and logo_proc7
+    print(f"data LogoSq {{\n    address 0xF740\n{rows(sq)}\n}}")
+    print(f"data LogoCos {{\n    address 0xF7B0\n{rows(cos)}\n}}")
+    print(f"data LogoX {{\n    address 0xF800\n{rows(lx)}\n}}")
+    print(f"data LogoY {{\n    address 0xF820\n{rows(ly)}\n}}")
+    print(f"""func logo_proc7 {{
+    x=sp_frame x?[{FRAMES // 2 + 1}] >={{ a=[{FRAMES}] c+ a-sp_frame x=a }}   // mirror: cos(N-f) = cos(f)
+    a=LogoCos,x ptrC=a                              // c = 64*cos(angle)
+    a=0 x=sp_frame x?[{FRAMES // 2}] >={{ a=0x80 }} ptrC+1=a     // sign of sin(angle)
+    logo_body
+}}""")
+    return len(pts)
+
+
 if __name__ == "__main__":
     main()
+    emit_logo()

@@ -42,7 +42,7 @@ var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
 var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
 var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[mood])
-var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond
+var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond, 4 logo
 var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
@@ -87,6 +87,10 @@ data SphTransG {
 // Transition used when entering a mood: calm parts implode, energetic ones explode
 //                  CALM   FULL   BREAK  BUILD
 data SphModeTrans { 0      1      0      1 }
+
+// Atari logo: from the 2nd calm part (sequence 44) to the end of the song, then the song
+// loops and the shapes start over. Colour: Atari red (the red mood page).
+[ SPH_LOGO_SEQ = 44, SPH_LOGO_NPTS = 28, SPH_LOGO_PAGE = 2 ]
 
 // Song mood per sequence position (copy of EqSongMode from eqsine.k65 - that one lives in
 // bank3 and can't be read from here): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
@@ -152,6 +156,25 @@ inline sph_body {
         a=sp_i c- a+2 sp_i=a
     } always                                                    // (loop too long for a branch:
     .done:                                                      //  exits jump via goto)
+}
+
+// Atari logo (bank7): flat, spinning around the vertical axis. Per point LogoX = x0 (signed
+// px), LogoY = y byte. x = x0*c/64 = (sq[|x0+c|] - sq[|x0-c|]) with c = 64*cos (ptrC);
+// far side when x0 and sin(angle) have the same sign (ptrC+1 = sign of sin).
+inline logo_body {
+    {
+        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
+        x=sp_i x?[SPH_LOGO_NPTS] >={ goto .done }               // all points done
+        a=LogoX,x c- a+ptrC <0{ a^0xFF c- a+1 } y=a a=LogoSq,y tmp1=a      // sq(|x0+c|)
+        a=LogoX,x c+ a-ptrC <0{ a^0xFF c- a+1 } y=a
+        a=tmp1 c+ a-LogoSq,y                                    // x0*c/64
+        c- a+64 tmp3=a                                          // x byte
+        a=LogoX,x a^ptrC+1 a&0x80 a^0x80 a|tmp3 tmp3=a          // + far-side flag
+        a=LogoY,x tmp4=a
+        sph_place
+        sp_i++
+    } always
+    .done:
 }
 
 // Vertex shapes (cube, ...): the frame holds only the rotated vertices (2 bytes each);

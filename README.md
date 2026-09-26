@@ -43,6 +43,9 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
    fioletowa kula (najszybciej). Zmiana kształtu: implozja (wejście w spokojną sekcję) albo
    eksplozja (wejście w energiczną). Bryły trzymają w ROM tylko obrócone wierzchołki; punkty
    na krawędziach VCS liczy sam jako średnie wierzchołków.
+   Od drugiego wejścia w spokojną sekcję (sekwencja 44, ~1:17) do końca utworu kręci się
+   czerwone logo Atari (Fuji, 28 punktów; obrót wokół pionu liczony na bieżąco: x = x₀·cos,
+   mnożenie przez tablicę kwadratów). Po zapętleniu utworu wszystko zaczyna się od nowa.
 
 **Obecnie włączone są efekty 4 i 3 (najpierw kula/bryły, potem EQ Sine)** – tęcza i plazma są zakomentowane w `main.k65`
 (kod zostaje; żeby je włączyć, wystarczy odkomentować linie).

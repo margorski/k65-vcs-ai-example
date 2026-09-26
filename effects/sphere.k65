@@ -56,11 +56,12 @@ inline sph_music {
     // base speed glides (1/256 per frame) towards the speed of the current song mood
     // shape: when the mood asks for another shape, implode, switch while collapsed, grow back
     x=songpos_seq y=SphSongMode,x
+    a=SphModeShape,y x?[SPH_LOGO_SEQ] >={ a=4 } tmp1=a      // target (logo from the 2nd calm on)
     a=sp_tt !={
         sp_tt--
-        a=sp_tt a?12 =={ a=SphModeShape,y sp_shape=a }      // collapsed / blown away: switch
+        a=sp_tt a?12 =={ a=tmp1 sp_shape=a }                // collapsed / blown away: switch
     } else {
-        a=SphModeShape,y a?sp_shape !={                     // new shape wanted: start the
+        a=tmp1 a?sp_shape !={                               // new shape wanted: start the
             sp_tt=a=24 a=SphModeTrans,y sp_ttype=a          //  mood's transition
         }
     }
@@ -87,7 +88,8 @@ inline sph_points {
     a=sp_shape !={
         a?2 <{ far shape_proc2 }                    // cube: vertex shape in bank2
         else { a?2 =={ far shape_procC }            // pyramid: bank core
-               else { far shape_proc7 } }           // diamond: bank7
+               else { a?3 =={ far shape_proc7 }     // diamond: bank7
+                      else { far logo_proc7 } } }   // Atari logo: bank7
     } else {
         // sphere: 88 frames in banks 5-6 -> bank + frame in bank
         x=sp_frame a=SphFrameMap,x
@@ -149,7 +151,8 @@ func sphere {
     sp_pv0=a sp_pv1=a sp_i=a
     sp_speed=a=[SPH_SPEED]
     a=0 sp_tt=a sp_sh=a sp_gr=a sp_ttype=a
-    x=songpos_seq y=SphSongMode,x a=SphModeShape,y sp_shape=a   // start with the mood's shape
+    x=songpos_seq y=SphSongMode,x a=SphModeShape,y          // start with the current shape
+    x?[SPH_LOGO_SEQ] >={ a=4 } sp_shape=a
     FxStart
     goto sphere_enter                           // called from overscan: start at vblank
     {
@@ -162,7 +165,8 @@ func sphere {
         sphere_enter:
         sync2                                   // --- vblank ---
             FxFadeLevel a<< a<< a<< a<< a<< sp_colp=a                    // level * 32 (SphCol page aligned)
-            x=songpos_seq a=SphSongMode,x c- a+&>SphCol sp_colp+1=a     // page = song mood
+            x=songpos_seq a=SphSongMode,x x?[SPH_LOGO_SEQ] >={ a=[SPH_LOGO_PAGE] }
+            c- a+&>SphCol sp_colp+1=a                   // page = song mood (logo: Atari red)
             sp_tmin=a=[SPH_TMIN_BLANK]           // ...and finish them (last thing before the
             sph_points                          //  picture: the time check covers everything)
         sync3                                   // --- picture ---

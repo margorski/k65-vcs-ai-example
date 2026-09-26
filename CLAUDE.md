@@ -23,7 +23,10 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   Shapes per mood (SphModeShape): calm cube (bank2), full pyramid (core), breakdown diamond (bank7), build-up
   sphere (banks 5-6, 88 frames mapped from 132); vertex shapes store only vertices, points = vertex pairs
   (midpoints / quarter points). Transitions: implosion (into calm moods) / explosion (into energetic ones).
-  ROM is nearly full: ~600 B left in core/bank2/bank7, ~70 B in banks 5-6, ~1.6 KB in bank4.
+  Atari logo (shape 4, bank7) from song sequence SPH_LOGO_SEQ = 44 to the song loop, Atari red; flat,
+  spun around Y at runtime (x = x0*cos via quarter squares), fed through the same sph_place.
+  ROM is nearly full: ~600 B left in core/bank2/bank7 (fragmented!), ~70 B in banks 5-6, ~1.6 KB in bank4.
+  A bank's code needs CONTIGUOUS free blocks - place big tables at fixed addresses to keep blocks whole.
 Enabled in main.k65: sphere -> eqsine.
 
 ## Knowledge base - read before editing K65 code
