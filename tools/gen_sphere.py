@@ -38,8 +38,22 @@ S3 = 1 / math.sqrt(3)
 CUBE_V = [(x * S3, y * S3, z * S3) for x in (-1, 1) for y in (-1, 1) for z in (-1, 1)]
 CUBE_E = [(i, j) for i in range(8) for j in range(i + 1, 8)
           if sum(a != b for a, b in zip(CUBE_V[i], CUBE_V[j])) == 1]
-# shape name, bank, vertices, drawn points (vertex pairs)
-SHAPES = [("cube", 2, CUBE_V, [(i, i) for i in range(8)] + CUBE_E)]
+# pyramid: apex + square base, all vertices inside the unit sphere (pulse headroom)
+PYR_V = [(0, 0.95, 0), (0.6, -0.5, 0.6), (0.6, -0.5, -0.6), (-0.6, -0.5, -0.6), (-0.6, -0.5, 0.6)]
+PYR_BASE = [(1, 2), (2, 3), (3, 4), (4, 1)]
+PYR_SLANT = [(0, k) for k in range(1, 5)]
+
+# drawn points: (a, b, quarter) - a vertex is (i, i, 0), an edge midpoint (i, j, 0),
+# a quarter point (i, j, 1) = 1/4 of the way from i to j (midpoint averaged with i again)
+def verts_and_mids(nv, edges):
+    return [(i, i, 0) for i in range(nv)] + [(a, b, 0) for a, b in edges]
+
+# shape name, bank, label suffix, vertices, drawn points
+SHAPES = [
+    ("cube", "bank2", "2", CUBE_V, verts_and_mids(8, CUBE_E)),
+    ("pyramid", "core", "C", PYR_V, verts_and_mids(5, PYR_BASE + PYR_SLANT)
+        + [(a, b, 1) for a, b in PYR_SLANT] + [(b, a, 1) for a, b in PYR_SLANT]),
+]
 
 # slot k = object: 0 P0, 1 P1, 2 M0, 3 M1, 4 BL - draws its dot on band line DOT0+k.
 # Depth: P0/M0/BL use the bright band colour (front of the sphere), P1/M1 the dim one (back).
@@ -137,14 +151,14 @@ def main():
         refs = " ".join(f"a={n}{bank}" for n in ("SphAnim", "SphScale", "SphLineBand", "SphCandBase", "SphCandOff", "SphLineCand"))
         print(f"func sph_proc{bank} {{\n    never {{ {refs} }}\n    sph_body\n}}")
 
-    for name, bank, verts, pairs in SHAPES:
+    for name, bank_name, bank, verts, pairs in SHAPES:
         assert len(verts) * 2 <= SHAPE_FRAME and len(pairs) < 64
         data = frames_of(verts, SHAPE_FRAME)
         assert len(data) <= ADDR_PAIRA - ADDR_ANIM
-        pa = [2 * a for a, b in pairs] + [0xFF]
-        pb = [2 * b for a, b in pairs] + [0xFF]
+        pa = [2 * a for a, b, q in pairs] + [0xFF]
+        pb = [2 * b + (0x40 if q else 0) for a, b, q in pairs] + [0xFF]   # bit 6 = quarter point
         print(f"\n// {name}: {len(verts)} vertices, {len(pairs)} drawn points")
-        print(f"bank bank{bank};\n")
+        print(f"bank {bank_name};\n")
         print(f"data ShpAnim{bank} {{\n    address 0x{ADDR_ANIM:04X}\n{rows(data, 32)}\n}}")
         print(f"data ShpPairA{bank} {{\n    address 0x{ADDR_PAIRA:04X}\n{rows(pa)}\n}}")
         print(f"data ShpPairB{bank} {{\n    address 0x{ADDR_PAIRB:04X}\n{rows(pb)}\n}}")

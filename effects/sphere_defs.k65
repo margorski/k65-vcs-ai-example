@@ -42,7 +42,9 @@ var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
 var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
 var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[mood])
-var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube
+var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid
+var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
+var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
 // (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple.
@@ -61,8 +63,15 @@ data SphCol {
 data SphModeSpeed { 0x40   0x80   0x50   0xC0 }
 
 // Shape per song mood:      CALM    FULL    BREAK   BUILD
-data SphModeShape {         1       0       0       0 }     // 0 sphere, 1 cube
-                            // planned: FULL = pyramid, BUILD = diamond (sphere until they exist)
+data SphModeShape {         1       2       0       0 }     // 0 sphere, 1 cube, 2 pyramid
+                            // target: CALM cube, FULL pyramid, BREAK diamond, BUILD sphere
+                            // (BREAK shows the sphere until the diamond exists)
+
+// Implosion curve over the transition timer (index 0..24, counts down):
+// 24..13 collapse (level 0 -> 5, 2 frames per level), 12 = shape switch, 12..1 grow back
+data SphTrans {
+    for x=0..24 eval [ x==0 ? 0 : (x > 12 ? min(5, floor((25-x)/2)) : min(5, floor(x/2))) ]
+}
 
 // Song mood per sequence position (copy of EqSongMode from eqsine.k65 - that one lives in
 // bank3 and can't be read from here): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
@@ -78,11 +87,18 @@ data SphSongMode {
 //  Point routine - instantiated in banks 5-7 by sphere_data.k65 (sph_proc5..7)
 //  in:  ptrC = animation frame, ptrD = scale table, sp_i = next point (x2), sp_tmin
 // ---------------------------------------------------------------------------
+// Implosion: A = signed offset from the centre, scaled by 1 / 2^sp_sh (sp_sh 5 = 0).
+inline sph_shrink {
+    x=sp_sh !={
+        x?5 >={ a=0 } else { { a?0x80 a>>> x-- }!= }         // arithmetic shift right
+    }
+}
+
 // Scale + place one point: tmp3 = x byte (offset+64, bit 7 = far side), tmp4 = y byte.
 // Picks the band and the nearest free object slot, stores the positioning value.
 inline sph_place {
-    a=tmp3 a&0x7F y=a a=(ptrD),y c- a+[SPH_CX] tmp1=a         // screen x
-    y=tmp4 a=(ptrD),y c- a+[SPH_CY] y=a                       // line in the dot area
+    a=tmp3 a&0x7F y=a a=(ptrD),y sph_shrink c- a+[SPH_CX] tmp1=a  // screen x
+    y=tmp4 a=(ptrD),y sph_shrink c- a+[SPH_CY] y=a            // line in the dot area
     a=SphLineBand,y tmp2=a                                    // band
     a=tmp3 <0{                                                // candidate list: back points
         a=SphLineCand,y c- a+[SPH_BACKROWS] x=a               //  prefer P1/M1 (dim colour),
@@ -115,17 +131,24 @@ inline sph_body {
 // Vertex shapes (cube, ...): the frame holds only the rotated vertices (2 bytes each);
 // every drawn point is a vertex pair (ShpPairA/B = byte offsets in the frame, 0xFF ends
 // the list): a vertex is (i,i), an edge midpoint (i,j) - with orthographic projection the
-// midpoint on screen is just the average. Far side only if both ends are. sp_i = point.
+// midpoint on screen is just the average; bit 6 of ShpPairB = quarter point (the midpoint
+// averaged with vertex A once more). Far side only if both ends are. sp_i = point.
 inline shape_body {
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
         x=sp_i
         y=ShpPairA,x <0{ goto .done }                           // end of the point list
         a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a                 // vertex A
-        y=ShpPairB,x
+        a=ShpPairB,x a&0x3F y=a
         a=(ptrC),y tmp1=a a&tmp3 a&0x80 tmp2=a                  // vertex B x, far only if both
         a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
         y++ a=(ptrC),y c- a+tmp4 a>> tmp4=a
+        a=ShpPairB,x a&0x40 !={                                 // quarter point: average the
+            y=ShpPairA,x                                        //  midpoint with vertex A again
+            a=(ptrC),y tmp1=a a&tmp3 a&0x80 tmp2=a
+            a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
+            y++ a=(ptrC),y c- a+tmp4 a>> tmp4=a
+        }
         sph_place
         sp_i++
     } always
