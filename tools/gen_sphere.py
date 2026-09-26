@@ -202,30 +202,54 @@ LOGO_SEG = [(0, 1), (2, 3), (4, 5), (5, 6), (7, 8), (8, 9)]
 LOGO_W = 1.2                        # logo is wider than the sphere radius
 LOGO_BANK = "bank7"
 
+# Altair logo (demogroup): centrelines of its 6 strokes in the 96x96 source png
+# (sv2019/gfx/altair-logo.png), sampled evenly; image px -> units: centre (44,44), 33 px = 1
+ALTAIR_STROKES = [((36, 16), (7, 76)), ((36, 16), (57.5, 63)), ((50, 15), (80, 74)),
+                  ((25, 74), (80, 74)), ((36, 47), (25, 74)), ((36, 47), (42.5, 63))]
+
+
+def altair_points(n=30):
+    lens = [math.dist(a, b) for a, b in ALTAIR_STROKES]
+    tot, pts = sum(lens), []
+    for (a, b), l in zip(ALTAIR_STROKES, lens):
+        k = max(2, round(n * l / tot))
+        pts += [(a[0] + (b[0] - a[0]) * i / (k - 1), a[1] + (b[1] - a[1]) * i / (k - 1)) for i in range(k)]
+    out = []
+    for p in pts:                                   # drop duplicates at shared joints
+        if all(math.dist(p, q) > 3 for q in out):
+            out.append(p)
+    return [((x - 44) / 33, (44 - y) / 33) for x, y in out]
+
 
 def emit_logo():
     pts = list(LOGO_V)
     for a, b in LOGO_SEG:
         (ax, ay), (bx, by) = LOGO_V[a], LOGO_V[b]
         pts += [(ax + (bx - ax) * t, ay + (by - ay) * t) for t in (0.25, 0.5, 0.75)]
-    lx = [round(RX * LOGO_W * x) & 0xFF for x, y in pts]            # signed pixels
-    ly = [round(-RY * y) + 64 for x, y in pts]                      # y byte (offset + 64)
+    alt = altair_points()
+    # two point sets, each ended by LogoY = 0xFF: Atari at index 0, Altair after it
+    lx = ([round(RX * LOGO_W * x) & 0xFF for x, y in pts] + [0]
+          + [round(RX * x) & 0xFF for x, y in alt] + [0])           # signed pixels
+    ly = ([round(-RY * y) + 64 for x, y in pts] + [0xFF]
+          + [round(-RY * y) + 64 for x, y in alt] + [0xFF])         # y byte (offset + 64)
+    altair_base = len(pts) + 1
+    assert all(abs(((v ^ 0x80) - 0x80)) <= 40 for v in lx)          # quarter squares: |x0 +- 64| <= 104
     # cos(f) = cos(FRAMES - f): half a table, the 6502 mirrors the index
     cos = [round(64 * math.cos(2 * math.pi * f / FRAMES)) & 0xFF for f in range(FRAMES // 2 + 1)]
-    sq = [n * n // 256 for n in range(105)]                         # quarter squares / 64, |x0+-c| <= 102
-    assert all(abs(round(RX * LOGO_W * x)) + 64 < 128 for x, y in pts)
-    print(f"\n// Atari logo: {len(pts)} points, spin computed at runtime")
+    sq = [n * n // 128 for n in range(105)]                         # quarter squares: diff = x0*c/32
+    print(f"\n// logos: Atari {len(pts)} points, Altair {len(alt)} points (from index {altair_base}),"
+          f" spin computed at runtime")
     print(f"bank {LOGO_BANK};\n")
     # fixed addresses right after the diamond's frames (132 x 12 B = F100-F72F), so that
     # big contiguous blocks stay free for the code of shape_proc7 and logo_proc7
     print(f"data LogoSq {{\n    address 0xF740\n{rows(sq)}\n}}")
     print(f"data LogoCos {{\n    address 0xF7B0\n{rows(cos)}\n}}")
     print(f"data LogoX {{\n    address 0xF800\n{rows(lx)}\n}}")
-    print(f"data LogoY {{\n    address 0xF820\n{rows(ly)}\n}}")
+    print(f"data LogoY {{\n    address 0xF840\n{rows(ly)}\n}}")
     print(f"""func logo_proc7 {{
     x=sp_frame x?[{FRAMES // 2 + 1}] >={{ a=[{FRAMES}] c+ a-sp_frame x=a }}   // mirror: cos(N-f) = cos(f)
     a=LogoCos,x ptrC=a                              // c = 64*cos(angle)
-    a=0 x=sp_frame x?[{FRAMES // 2}] >={{ a=0x80 }} ptrC+1=a     // sign of sin(angle)
+    a=0 x=sp_shape x?5 =={{ a=[{altair_base}] }} sp_lbase=a       // point set: 4 Atari, 5 Altair
     logo_body
 }}""")
     return len(pts)

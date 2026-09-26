@@ -837,18 +837,18 @@ func shape_proc7 {
     shape_body
 }
 
-// Atari logo: 28 points, spin computed at runtime
+// logos: Atari 28 points, Altair 26 points (from index 29), spin computed at runtime
 bank bank7;
 
 data LogoSq {
     address 0xF740
-    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
-    1 1 1 1 1 1 1 2 2 2 2 2 3 3 3 3
-    4 4 4 4 5 5 5 5 6 6 6 7 7 7 8 8
-    9 9 9 10 10 10 11 11 12 12 13 13 14 14 15 15
-    16 16 17 17 18 18 19 19 20 20 21 21 22 23 23 24
-    25 25 26 26 27 28 28 29 30 30 31 32 33 33 34 35
-    36 36 37 38 39 39 40 41 42
+    0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1
+    2 2 2 2 3 3 3 4 4 4 5 5 6 6 7 7
+    8 8 9 9 10 10 11 11 12 13 13 14 15 15 16 17
+    18 18 19 20 21 21 22 23 24 25 26 27 28 29 30 31
+    32 33 34 35 36 37 38 39 40 41 42 43 45 46 47 48
+    50 51 52 53 55 56 57 59 60 61 63 64 66 67 69 70
+    72 73 75 76 78 79 81 82 84
 }
 data LogoCos {
     address 0xF7B0
@@ -861,16 +861,20 @@ data LogoCos {
 data LogoX {
     address 0xF800
     253 253 3 3 10 16 38 246 240 218 253 253 253 3 3 3
-    12 13 15 22 27 33 244 243 241 234 229 223
+    12 13 15 22 27 33 244 243 241 234 229 223 0 248 244 239
+    234 229 225 220 253 3 8 13 6 11 16 20 25 30 35 238
+    248 3 14 24 248 243 255 0
 }
 data LogoY {
-    address 0xF820
+    address 0xF840
     1 127 1 127 1 80 127 1 80 127 32 64 96 32 64 96
-    21 40 60 92 103 115 21 40 60 92 103 115
+    21 40 60 92 103 115 21 40 60 92 103 115 255 11 30 49
+    68 87 106 125 33 55 78 100 9 27 46 65 84 102 121 121
+    121 121 121 121 70 96 100 255
 }
 func logo_proc7 {
     x=sp_frame x?[67] >={ a=[132] c+ a-sp_frame x=a }   // mirror: cos(N-f) = cos(f)
     a=LogoCos,x ptrC=a                              // c = 64*cos(angle)
-    a=0 x=sp_frame x?[66] >={ a=0x80 } ptrC+1=a     // sign of sin(angle)
+    a=0 x=sp_shape x?5 =={ a=[29] } sp_lbase=a       // point set: 4 Atari, 5 Altair
     logo_body
 }

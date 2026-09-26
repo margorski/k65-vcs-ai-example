@@ -39,6 +39,18 @@ bank bank4;
 //  Per frame
 // ---------------------------------------------------------------------------
 
+// Shape for the current song position: x = songpos_seq, y = mood -> A
+//   first verse: Altair logo, from the 2nd calm part on: Atari logo, otherwise the mood's shape
+inline sph_target {
+    a=SphModeShape,y
+    x?[SPH_LOGO_SEQ] >={ a=4 }
+    x?[SPH_ALTAIR_SEQ_END] <{ a=5 }
+}
+
+// ---------------------------------------------------------------------------
+//  (music + animation)
+// ---------------------------------------------------------------------------
+
 // kick -> speed boost, hat -> pulse; advance the animation
 inline sph_music {
     // attack = volume rises by >= 4 (kick) / >= 2 (hats are quiet, e.g. in the intro)
@@ -56,7 +68,7 @@ inline sph_music {
     // base speed glides (1/256 per frame) towards the speed of the current song mood
     // shape: when the mood asks for another shape, implode, switch while collapsed, grow back
     x=songpos_seq y=SphSongMode,x
-    a=SphModeShape,y x?[SPH_LOGO_SEQ] >={ a=4 } tmp1=a      // target (logo from the 2nd calm on)
+    sph_target tmp1=a                                       // shape wanted now
     a=sp_tt !={
         sp_tt--
         a=sp_tt a?12 =={ a=tmp1 sp_shape=a }                // collapsed / blown away: switch
@@ -151,8 +163,7 @@ func sphere {
     sp_pv0=a sp_pv1=a sp_i=a
     sp_speed=a=[SPH_SPEED]
     a=0 sp_tt=a sp_sh=a sp_gr=a sp_ttype=a
-    x=songpos_seq y=SphSongMode,x a=SphModeShape,y          // start with the current shape
-    x?[SPH_LOGO_SEQ] >={ a=4 } sp_shape=a
+    x=songpos_seq y=SphSongMode,x sph_target sp_shape=a     // start with the current shape
     FxStart
     goto sphere_enter                           // called from overscan: start at vblank
     {
@@ -164,8 +175,15 @@ func sphere {
             sph_points
         sphere_enter:
         sync2                                   // --- vblank ---
-            FxFadeLevel a<< a<< a<< a<< a<< sp_colp=a                    // level * 32 (SphCol page aligned)
+            FxFadeLevel
+            x=sp_shape x?4 >={                      // logo with its back to the viewer: darker
+                x=sp_frame x?[SPH_FRAMES/4] >={ x?[SPH_FRAMES*3/4] <{   // cos < 0: 90..270 degrees
+                    a?[SPH_LOGO_BACKDIM+1] >={ c+ a-[SPH_LOGO_BACKDIM] }
+                } }
+            }
+            a<< a<< a<< a<< a<< sp_colp=a                                // level * 32 (SphCol page aligned)
             x=songpos_seq a=SphSongMode,x x?[SPH_LOGO_SEQ] >={ a=[SPH_LOGO_PAGE] }
+            x?[SPH_ALTAIR_SEQ_END] <{ a=[SPH_ALTAIR_PAGE] }                 // Altair: grey
             c- a+&>SphCol sp_colp+1=a                   // page = song mood (logo: Atari red)
             sp_tmin=a=[SPH_TMIN_BLANK]           // ...and finish them (last thing before the
             sph_points                          //  picture: the time check covers everything)

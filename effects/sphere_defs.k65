@@ -42,22 +42,28 @@ var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
 var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
 var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[mood])
-var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond, 4 logo
+var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond,
+                            //  4 Atari logo, 5 Altair logo
+var sp_lbase = 0xEC;        // logo routine: start index of the point set
 var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
 var sp_gr    = 0xEB;        // explosion level 0..4 (scale 2^level, points off-screen are dropped)
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
-// (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple.
+// (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple,
+// + logo pages without the far-side darkening (flat logos): 4 grey (Altair), 5 red (Atari).
+// Luminance never below 2 (grey 0 would be black = invisible).
 // Inside a page: 8 fade levels x 32 = [0..15] front (bright, P0/M0/BL),
 // [16..31] back (6 luminance steps darker, P1/M1).
 data SphCol {
-    align 256
-    for x=0..1023 eval [ mood = floor(x/256), lvl = floor((x%256)/32), b = x%16, back = floor(x/16)%2,
-        hue = mood==0 ? 0xB0 : (mood==1 ? 0x50 : (mood==2 ? 0x60 : 0xA0)),
+    address 0xF400          // fixed (F400-F9FF): keeps FA00-FBFF + the end of bank4 free for the
+                            //  far-call stubs, which must sit at the same address as in the data banks
+    for x=0..1535 eval [ mood = floor(x/256), lvl = floor((x%256)/32), b = x%16,
+        back = mood > 3 ? 0 : floor(x/16)%2,
+        hue = mood==0 ? 0xB0 : (mood==1 ? 0x50 : (mood==2 ? 0x60 : (mood==3 ? 0xA0 : (mood==4 ? 0x00 : 0x60)))),
         lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
-        lvl==0 ? 0 : (lum < 0 ? hue : hue + (lum & 14)) ]
+        lvl==0 ? 0 : (lum < 2 ? hue + 2 : hue + (lum & 14)) ]
 }
 
 // Base rotation speed per song mood (1/256 animation frames per video frame; 132 frames = 1 turn)
@@ -90,7 +96,10 @@ data SphModeTrans { 0      1      0      1 }
 
 // Atari logo: from the 2nd calm part (sequence 44) to the end of the song, then the song
 // loops and the shapes start over. Colour: Atari red (the red mood page).
-[ SPH_LOGO_SEQ = 44, SPH_LOGO_NPTS = 28, SPH_LOGO_PAGE = 2 ]
+[ SPH_LOGO_SEQ = 44, SPH_LOGO_PAGE = 5 ]
+// Altair logo (demogroup): the first verse (sequences 0..7), grey, then the calm cube.
+[ SPH_ALTAIR_SEQ_END = 8, SPH_ALTAIR_PAGE = 4 ]
+[ SPH_LOGO_BACKDIM = 3 ]    // fade levels darker while the back of a logo faces the viewer
 
 // Song mood per sequence position (copy of EqSongMode from eqsine.k65 - that one lives in
 // bank3 and can't be read from here): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
@@ -158,18 +167,23 @@ inline sph_body {
     .done:                                                      //  exits jump via goto)
 }
 
-// Atari logo (bank7): flat, spinning around the vertical axis. Per point LogoX = x0 (signed
-// px), LogoY = y byte. x = x0*c/64 = (sq[|x0+c|] - sq[|x0-c|]) with c = 64*cos (ptrC);
-// far side when x0 and sin(angle) have the same sign (ptrC+1 = sign of sin).
+// Logos (bank7): Atari (shape 4) and Altair (shape 5) point sets in the same tables, each
+// ended by LogoY = 0xFF, sp_lbase = start index. Flat, spinning around the vertical axis.
+// A flat object has no per-point depth worth shading (at face-on every point is at depth 0,
+// the left/right halves would swap bright/dim instantly), so all points are "front" (stable
+// slot assignment, no jitter) and the whole logo is dimmed while its back faces the viewer
+// (colour page + fade level, see sphere.k65). Per point LogoX = x0 (signed px), LogoY = y byte.
+// x = x0*c/64 with c = 64*cos (ptrC): quarter squares with sq[n] = n*n/128 give x0*c/32,
+// halved with rounding (half the error of a direct /64 table).
 inline logo_body {
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i x?[SPH_LOGO_NPTS] >={ goto .done }               // all points done
+        a=sp_i c- a+sp_lbase x=a                                // index in the logo tables
+        a=LogoY,x <0{ goto .done }                              // 0xFF: end of this logo
         a=LogoX,x c- a+ptrC <0{ a^0xFF c- a+1 } y=a a=LogoSq,y tmp1=a      // sq(|x0+c|)
         a=LogoX,x c+ a-ptrC <0{ a^0xFF c- a+1 } y=a
-        a=tmp1 c+ a-LogoSq,y                                    // x0*c/64
-        c- a+64 tmp3=a                                          // x byte
-        a=LogoX,x a^ptrC+1 a&0x80 a^0x80 a|tmp3 tmp3=a          // + far-side flag
+        a=tmp1 c+ a-LogoSq,y                                    // x0*c/32
+        a?0x80 a>>> a+64 tmp3=a                                 // /2 rounded (carry) + 64 = x byte
         a=LogoY,x tmp4=a
         sph_place
         sp_i++
