@@ -154,7 +154,10 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
   = 12 such multiplies (~1000 cycles). Rotate only what you must: an octahedron's vertices ARE the
   matrix columns (+-), so 3 vertices are computed and the opposite ones are negated; edge points are
   vertex averages (orthographic projection). Keep x/y as bytes offset by 64 with a flag in bit 7:
-  negating the whole x byte (two's complement) negates x AND flips the flag.
+  negating the whole x byte (two's complement) negates x AND flips the flag. A pyramid is not
+  symmetric: apex = column 1, base centre = -apex/2, corners = centre +- (G0 +- G2) - its corners
+  need their real z (14 multiplies), and -corner = -apex - corner can be derived later from bytes.
+  Spare flag bits: bytes whose range is 1..127 have a free bit 7.
 - **Re-arm the RIOT timer mid-frame** for finer phases: the picture's T1024T (1024-cycle units) is
   too coarse for "is there time for one more item?" checks. Overwrite it with TIM64T at a fixed
   point (start of a line, right after WSYNC) with a value that ends on the same line as before

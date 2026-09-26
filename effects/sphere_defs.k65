@@ -31,7 +31,7 @@ bank bank4;
 // Fixed addresses of the tables in banks 5-7 (same in every bank, see gen_sphere.py)
 var SphAnimA = 0xF100, SphScaleA = 0xFC00, SphLineBand = 0xFE00;
 var SphCandBase = 0xFEA8, SphCandOff = 0xFEE4, SphLineCand = 0xFF20;
-var ShpAnimA = 0xF100, ShpPairA = 0xFA00, ShpPairB = 0xFA40;   // vertex-shape banks
+var ShpAnimA = 0xF100, ShpPairA = 0xFBA0, ShpPairB = 0xFBD0;   // vertex-shape banks
 [ SPH_BACKROWS = 30 ]       // back points use candidate rows 5-9 (5 rows x 6)
 
 // RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
@@ -66,6 +66,12 @@ var dia_sy = 0xF4, dia_cy = 0xF5, dia_cyg = 0xF6, dia_t = 0xF7;  // setup scratc
 // free during the points: ptrA/ptrB after the music player, sp_colp until the end of vblank)
 var dia_ntx = 0xF4, dia_nty = 0xF5, dia_nux = 0xF6, dia_nuy = 0xF7, dia_nwx = 0xD8, dia_nwy = 0xD9;
 var zp0 = 0x00, zp1 = 0x01;         // base for zero page indexed reads (a=zp0,x = RAM at x)
+// Live pyramid (core) uses the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
+// pyr_setup); -P / -Q go to dia_ntx.. like the diamond's opposite vertices. Its setup scratch:
+var pyr_hx = 0xE6, pyr_hy = 0xE7, pyr_hz = 0xCF, pyr_g = 0xD7;   // (ptrD, sp_i, sp_tmin: all free
+                                                                //  above the picture)
+// Trig + quarter-square tables of the live shapes: same fixed address in bank7 and core
+var LvSin = 0xF000, LvCos = 0xF084, LvSinG = 0xF108, LvCosG = 0xF18C, LvSq = 0xF210;  // (gen_sphere.py ADDR_LV)
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
 // (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple,
@@ -246,14 +252,14 @@ inline shape_body {
 //      U = 0.62 * ( cy*cz,  cy*sz,  -sy )
 //      T = ( sx*sy*cz - cx*sz,  sx*sy*sz + cx*cz,  sx*cy )
 //      W = 0.62 * ( cx*sy*cz + sx*sz,  cx*sy*sz - sx*cz,  cx*cy )
-//  sin/cos tables have amplitude 63 (DiaSinG/DiaCosG: 0.62 x 63 = 39) and products use quarter
+//  sin/cos tables have amplitude 63 (LvSinG/LvCosG: 0.62 x 63 = 39) and products use quarter
 //  squares: sq(|a+b|) - sq(|a-b|) = 2ab/63 -> results in "double units" (126 = 1.0), which
 //  are exactly the screen scales: x px = v/4 (radius ~32), y lines = v/2 (radius 63).
 //  12 multiplies, ~900 cycles per frame. Max error vs the float rotation: 1 px / 2 lines.
 // ---------------------------------------------------------------------------
 inline dia_mul {        // A = tmp1 * tmp2 * 2/63 (|tmp1|,|tmp2| <= 63), uses Y, tmp3
-    a=tmp1 c- a+tmp2 <0{ a^0xFF c- a+1 } y=a a=DiaSq,y tmp3=a
-    a=tmp1 c+ a-tmp2 <0{ a^0xFF c- a+1 } y=a a=tmp3 c+ a-DiaSq,y
+    a=tmp1 c- a+tmp2 <0{ a^0xFF c- a+1 } y=a a=LvSq,y tmp3=a
+    a=tmp1 c+ a-tmp2 <0{ a^0xFF c- a+1 } y=a a=tmp3 c+ a-LvSq,y
 }
 inline dia_half { a?0x80 a>>> a+0 }                     // A/2 rounded (carry = the lost bit)
 inline dia_ovf { <<={ <0{ a=0x7F } else { a=0x81 } } }  // after a sum: clamp on signed overflow
@@ -263,26 +269,26 @@ inline dia_yb { dia_half a^0xFF c- a+65 }               // -> y byte: 64 - v/2 (
 inline dia_setup {
     a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
     else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
-    y=a a=DiaSin,y dia_sy=a a=DiaCos,y dia_cy=a a=DiaCosG,y dia_cyg=a
+    y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
     x=sp_frame                                          // X and Z angle = frame (X stays = index)
     // U: x = cy*cz, y = cy*sz, far side when z = -sy < 0 (sy > 0)
-    a=dia_cyg tmp1=a a=DiaCos,x tmp2=a dia_mul dia_xb tmp4=a
-    a=DiaSin,x tmp2=a dia_mul dia_yb dia_uy=a
+    a=dia_cyg tmp1=a a=LvCos,x tmp2=a dia_mul dia_xb tmp4=a
+    a=LvSin,x tmp2=a dia_mul dia_yb dia_uy=a
     a=0 c+ a-dia_sy a&0x80 a|tmp4 dia_ux=a
     // T: t = sx*sy ; x = t*cz - cx*sz, y = t*sz + cx*cz, far when sx*cy < 0
-    a=DiaSin,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
-    tmp1=a a=DiaCos,x tmp2=a dia_mul tmp4=a
-    a=DiaCos,x tmp1=a a=DiaSin,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_xb tmp4=a
-    a=DiaSin,x a^dia_cy a&0x80 a|tmp4 dia_tx=a
-    a=dia_t tmp1=a a=DiaSin,x tmp2=a dia_mul tmp4=a
-    a=DiaCos,x tmp1=a tmp2=a dia_mul c- a+tmp4 dia_ovf dia_yb dia_ty=a
+    a=LvSin,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
+    tmp1=a a=LvCos,x tmp2=a dia_mul tmp4=a
+    a=LvCos,x tmp1=a a=LvSin,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_xb tmp4=a
+    a=LvSin,x a^dia_cy a&0x80 a|tmp4 dia_tx=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a dia_mul tmp4=a
+    a=LvCos,x tmp1=a tmp2=a dia_mul c- a+tmp4 dia_ovf dia_yb dia_ty=a
     // W: t = cx*sy (x 0.62) ; x = t*cz + sx*sz, y = t*sz - sx*cz (sx x 0.62), far when cx*cy < 0
-    a=DiaCosG,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
-    tmp1=a a=DiaCos,x tmp2=a dia_mul tmp4=a
-    a=DiaSinG,x tmp1=a a=DiaSin,x tmp2=a dia_mul c- a+tmp4 dia_ovf dia_xb tmp4=a
-    a=DiaCos,x a^dia_cy a&0x80 a|tmp4 dia_wx=a
-    a=dia_t tmp1=a a=DiaSin,x tmp2=a dia_mul tmp4=a
-    a=DiaSinG,x tmp1=a a=DiaCos,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_yb dia_wy=a
+    a=LvCosG,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
+    tmp1=a a=LvCos,x tmp2=a dia_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a dia_mul c- a+tmp4 dia_ovf dia_xb tmp4=a
+    a=LvCos,x a^dia_cy a&0x80 a|tmp4 dia_wx=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a dia_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvCos,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_yb dia_wy=a
 }
 
 // Opposite vertex: the x byte negated as a whole (-(64+x | back) = 64-x | the other side),
@@ -320,6 +326,91 @@ inline dia_body {
         dia_fetch3                                              // vertex A
         x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
         y=a dia_fetch                                           // edge midpoint: + vertex B
+        .avg:
+        dia_avg
+        .place:
+        sph_place
+        sp_i++
+    } always
+    .done:
+}
+
+
+// ---------------------------------------------------------------------------
+//  Live pyramid (core): apex T = column 1 of R, base centre h = -T/2, base corners
+//  h +- (G0 + G2) = +-P and h +- (G0 - G2) = +-Q with G0/G2 = 0.62 x columns 0/2
+//  (pyramid: apex (0,1,0), corners (+-0.62, -0.5, +-0.62)). Not symmetric like the diamond,
+//  so the corners need their real z for the far-side bits: 14 multiplies (~1100 cycles).
+//  Kept: T, +P, +Q (x byte | far bit, y byte); the far bits of -P / -Q ride in bit 7 of the
+//  +P / +Q y bytes (y bytes are 1..127). -P = 2h - P = -T - P -> byte 192 - T - P, per phase.
+// ---------------------------------------------------------------------------
+inline pyr_setup {
+    a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
+    else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
+    y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
+    a=LvSinG,y a<< a^0xFF c- a+1 pyr_g=a                 // G0 z = -0.62 sy (double units)
+    x=sp_frame                                          // X and Z angle = frame (X stays = index)
+    // apex T (as the diamond's tip), h = -T/2
+    a=LvSin,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a
+    tmp1=a a=LvCos,x tmp2=a dia_mul tmp4=a
+    a=LvCos,x tmp1=a a=LvSin,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf
+    tmp4=a dia_half a^0xFF c- a+1 pyr_hx=a a=tmp4 dia_xb dia_tx=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a dia_mul tmp4=a
+    a=LvCos,x tmp1=a tmp2=a dia_mul c- a+tmp4 dia_ovf
+    tmp4=a dia_half a^0xFF c- a+1 pyr_hy=a a=tmp4 dia_yb dia_ty=a
+    a=LvSin,x tmp1=a a=dia_cy tmp2=a dia_mul             // z = sx*cy
+    tmp4=a dia_half a^0xFF c- a+1 pyr_hz=a a=tmp4 a&0x80 a|dia_tx dia_tx=a
+    // corners, z first: far bits of +P/+Q -> their x bytes, of -P/-Q -> bit 7 of the y bytes
+    a=LvCosG,x tmp1=a a=dia_cy tmp2=a dia_mul tmp4=a     // G2 z = 0.62 cx*cy
+    a=pyr_hz c- a+pyr_g c- a+tmp4 a&0x80 dia_ux=a        // +P = h + G0 + G2
+    a=pyr_hz c+ a-pyr_g c+ a-tmp4 a&0x80 dia_uy=a        // -P = h - G0 - G2
+    a=pyr_hz c- a+pyr_g c+ a-tmp4 a&0x80 dia_wx=a        // +Q = h + G0 - G2
+    a=pyr_hz c+ a-pyr_g c- a+tmp4 a&0x80 dia_wy=a        // -Q = h - G0 + G2
+    a=LvCosG,x tmp1=a a=dia_sy tmp2=a dia_mul dia_half dia_t=a   // t2 = 0.62 cx*sy
+    // x: G0 = 0.62 cy*cz, G2 = t2*cz + 0.62 sx*sz
+    a=dia_cyg tmp1=a a=LvCos,x tmp2=a dia_mul pyr_g=a
+    a=dia_t tmp1=a a=LvCos,x tmp2=a dia_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a dia_mul c- a+tmp4 tmp4=a
+    a=pyr_g c+ a-tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_wx dia_wx=a
+    a=pyr_g c- a+tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_ux dia_ux=a
+    // y: G0 = 0.62 cy*sz, G2 = t2*sz - 0.62 sx*cz
+    a=dia_cyg tmp1=a a=LvSin,x tmp2=a dia_mul pyr_g=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a dia_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvCos,x tmp2=a dia_mul tmp3=a a=tmp4 c+ a-tmp3 tmp4=a
+    a=pyr_g c+ a-tmp4 c- a+pyr_hy dia_ovf dia_yb a|dia_wy dia_wy=a
+    a=pyr_g c- a+tmp4 c- a+pyr_hy dia_ovf dia_yb a|dia_uy dia_uy=a
+}
+
+// per point phase: -P -> dia_ntx/nty, -Q -> dia_nux/nuy (byte = 192 - T - corner, low 7 bits)
+inline pyr_prep {
+    a=dia_tx a&0x7F tmp1=a a=dia_ux a&0x7F c- a+tmp1 tmp1=a
+    a=[192] c+ a-tmp1 tmp1=a a=dia_uy a&0x80 a|tmp1 dia_ntx=a
+    a=dia_uy a&0x7F c- a+dia_ty tmp1=a a=[192] c+ a-tmp1 dia_nty=a
+    a=dia_tx a&0x7F tmp1=a a=dia_wx a&0x7F c- a+tmp1 tmp1=a
+    a=[192] c+ a-tmp1 tmp1=a a=dia_wy a&0x80 a|tmp1 dia_nux=a
+    a=dia_wy a&0x7F c- a+dia_ty tmp1=a a=[192] c+ a-tmp1 dia_nuy=a
+}
+// vertex id in Y (0 apex, 1 +P, 2 +Q, 3 -P, 4 -Q) -> x byte, y byte (bit 7 of the y byte masked)
+inline pyr_fetch { x=PyrZp,y a=zp0,x tmp1=a a=zp1,x a&0x7F tmp2=a }    // -> tmp1, tmp2
+inline pyr_fetch3 { x=PyrZp,y a=zp0,x tmp3=a a=zp1,x a&0x7F tmp4=a }   // -> tmp3, tmp4
+
+// Like dia_body, plus ShpPairB = B | 0x20: a quarter point that does not follow its midpoint
+// (the second quarter point of a slant edge): midpoint A-B, then averaged with A again.
+inline pyr_body {
+    x=sp_i y=ShpPairA,x <0{ goto .done }                        // (all points done)
+    pyr_prep
+    x=sp_i a=ShpPairB,x a&0x40 =={ goto .loop }
+    x-- y=ShpPairA,x pyr_fetch3 x=sp_i x-- y=ShpPairB,x pyr_fetch dia_avg
+    .loop:
+    {
+        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
+        x=sp_i y=ShpPairA,x <0{ goto .done }                    // end of the point list
+        a=ShpPairB,x a&0x40 !={ pyr_fetch goto .avg }           // quarter point (after its midpoint)
+        pyr_fetch3                                              // vertex A
+        x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
+        a&0x1F y=a pyr_fetch dia_avg                            // edge midpoint: + vertex B
+        x=sp_i a=ShpPairB,x a&0x20 =={ goto .place }
+        y=ShpPairA,x pyr_fetch                                  // quarter point: with A again
         .avg:
         dia_avg
         .place:

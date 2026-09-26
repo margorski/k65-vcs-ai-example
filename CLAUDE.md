@@ -21,14 +21,15 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   there, the 30 lines ABOVE the sphere run sph_music + the diamond rotation), overscan and vblank (adaptive: stops when the RIOT timer runs low, next phase continues) - measure
   the slack (see docs/project-structure.md) after any change there.
   File order in files.lst matters: sphere_defs -> sphere_data -> sphere (far call to a later function crashes K65).
-  Shapes per mood (SphModeShape): calm cube (bank2), full pyramid (core), breakdown diamond (bank7, rotated
-  LIVE: dia_setup = rotation matrix by quarter-square multiplies above the picture, 3 vertices in RAM
-  E4-E5/EC-EF, see sphere_defs.k65), build-up
+  Shapes per mood (SphModeShape): calm cube (bank2), full pyramid (core), breakdown diamond (bank7), build-up
   sphere (banks 5-6, 88 frames mapped from 132); vertex shapes store only vertices, points = vertex pairs
-  (midpoints / quarter points). Transitions: implosion (into calm moods) / explosion (into energetic ones).
+  (midpoints / quarter points). The pyramid and the diamond are rotated LIVE (pyr_setup / dia_setup:
+  rotation matrix by quarter-square multiplies above the picture, 3 vertices kept in RAM E4-E5/EC-EF,
+  the rest derived per point phase; shared trig tables at F000 in core + bank7). Transitions: implosion (into calm moods) / explosion (into energetic ones).
   Atari logo (shape 4, bank7) from song sequence SPH_LOGO_SEQ = 44 to the song loop, Atari red; flat,
   spun around Y at runtime (x = x0*cos via quarter squares), fed through the same sph_place.
   ROM is nearly full: ~600 B left in core/bank2/bank7 (fragmented!), ~70 B in banks 5-6, ~1 KB in bank4.
+  Vertex-shape point lists sit at FBA0/FBD0 (right before SphScale) so the free space stays in one block.
   Far stubs of sph_proc5/6 are pinned in system_a2600.nut (FIXED_STUBS) - otherwise any code change in
   bank4 can move them into the middle of banks 5-6's only free block ("Can't allocate section sph_proc5").
   A bank's code needs CONTIGUOUS free blocks - place big tables at fixed addresses to keep blocks whole.

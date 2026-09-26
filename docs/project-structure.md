@@ -87,7 +87,8 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
   eqsine reuses the scratch bytes `0xE1-0xE7` + `0xEE` for scanner/ball/spark kernel parameters
 - (`0x80-0xCF` is shared per-effect scratch: every effect initialises what it uses)
 - `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` sphere (5 x 15 band positions + animation/music state);
-  live diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` + `0xD8-0xD9`
+  live pyramid/diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` +
+  `0xD8-0xD9`, rotation scratch above the picture `0xF4-0xF7`, `0xE6-0xE7`, `0xCF`, `0xD7`
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)
