@@ -3,8 +3,8 @@
 _defs.k65			           core
 _gamedefs.k65                  core
 util.k65                       core
-music/song_mini_sv18.k65	   audio
-music/music_player_mini.k65    audio
+music/song_mini_sv18.k65	   core
+music/music_player_mini.k65    core
 effects/rainbow.k65            core
 effects/plasma.k65             bank2
 effects/eqsine.k65             bank3

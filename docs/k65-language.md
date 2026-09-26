@@ -200,7 +200,7 @@ Variables can be set from files.lst with a line `DEBUG = 1` (**spaces around `=`
 ```
 -system A2600            # loads system_a2600.nut (project-local copy wins over SDK workdir)
 _defs.k65      core      # <file> <default bank>
-music/x.k65    audio
+music/x.k65    bank1
 -superchip               # (A2600) enable SC RAM: SCRamWrite=0x1000, SCRamRead=0x1080
 -keep name               # force-link an unreferenced section (SDK workdir .nut only)
 DEBUG = 1                # compile-time variable (for #if) - spaces around '=' are required

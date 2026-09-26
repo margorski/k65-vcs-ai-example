@@ -1,6 +1,7 @@
 // ============================================================================
 //  Sphere - shared definitions: constants, RAM, fixed table addresses, and the
-//  point routine body (sph_body) that sphere_data.k65 instantiates in banks 5-7.
+//  point routine bodies that sphere_data.k65 instantiates in the data banks
+//  (sphere: bank5, cube + pyramid: bank2, diamond + logos: bank1).
 //  Must be compiled BEFORE sphere_data.k65, which must come BEFORE sphere.k65:
 //  K65 crashes on a `far` call to a function that is defined later.
 // ============================================================================
@@ -8,7 +9,7 @@
 bank bank4;
 
 [ SPH_NPTS = 30 ]           // points (must match tools/gen_sphere.py)
-[ SPH_FRAMES = 132, SPH_FPB = 44 ]   // shapes: 132 frames; sphere: 88 (2 banks x 44), frame*2/3
+[ SPH_FRAMES = 132 ]        // animation frames per turn (the sphere stores 66, see sph_body)
 [ SPH_NB = 15, SPH_TOP = 30 ]   // bands, blank lines above the dot area
 [ SPH_CX = 80, SPH_CY = 82 ]    // centre: pixel / line within the dot area
 [ SPH_SPEED = 0x40 ]        // speed at effect start (1/256 animation frames per video frame),
@@ -28,10 +29,9 @@ bank bank4;
                             //  the worst point ~470 cycles (measured; otherwise <= ~400, the live
                             //  diamond included)
 
-// Fixed addresses of the tables in banks 5-7 (same in every bank, see gen_sphere.py)
+// Fixed addresses of the tables in the data banks (same in every bank, see gen_sphere.py)
 var SphAnimA = 0xF100, SphScaleA = 0xFC00, SphLineBand = 0xFE00;
 var SphCandBase = 0xFEA8, SphCandOff = 0xFEE4, SphLineCand = 0xFF20;
-var ShpAnimA = 0xF100, ShpPairA = 0xFBA0, ShpPairB = 0xFBD0;   // vertex-shape banks
 [ SPH_BACKROWS = 30 ]       // back points use candidate rows 5-9 (5 rows x 6)
 
 // RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
@@ -41,7 +41,7 @@ var sp_frac  = 0xCB;        // animation position, fraction
 var sp_frame = 0xCC;        // animation frame 0..SPH_FRAMES-1
 var sp_boost = 0xCD;        // kick speed surge 32 -> 0 (x4 = speed add in 1/256 frames)
 var sp_pulse = 0xCE;        // hat pulse, decays (scale level = pulse/4)
-var sp_i     = 0xCF;        // point routine: byte index into the frame (2 per point)
+var sp_i     = 0xCF;        // point routine: next point
 var sp_pv0   = 0xD5;        // previous volumes (attack detection)
 var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
@@ -50,6 +50,7 @@ var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[m
 var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond,
                             //  4 Atari logo, 5 Altair logo
 var sp_lbase = 0xEC;        // logo routine: start index of the point set
+var sp_flip  = 0xEC;        // sphere routine: 0x80 in the 2nd half turn (far bits flipped)
 var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
@@ -67,14 +68,14 @@ var dia_cyg = 0xDD, dia_t = 0xDF;   //  the stack is 8 bytes deep there) + mus_f
 // free during the points: ptrA/ptrB after the music player, sp_colp until the end of vblank)
 var dia_ntx = 0xF4, dia_nty = 0xF5, dia_nux = 0xF6, dia_nuy = 0xF7, dia_nwx = 0xD8, dia_nwy = 0xD9;
 var zp0 = 0x00, zp1 = 0x01;         // base for zero page indexed reads (a=zp0,x = RAM at x)
-// Live pyramid (core) uses the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
+// Live pyramid and cube (bank2) use the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
 // pyr_setup); -P / -Q go to dia_ntx.. like the diamond's opposite vertices. Its setup scratch:
 var pyr_hx = 0xE6, pyr_hy = 0xE7, pyr_hz = 0xCF, pyr_g = 0xD7;   // (ptrD, sp_i, sp_tmin: all free
                                                                 //  above the picture)
 // Live cube (bank2): A B C in the 3 vertex slots (see cub_setup), D = A - B - C per phase. Scratch:
 var cub_c0 = 0xD7, cub_c1 = 0xE7, cub_c2 = 0xCF, cub_t2 = 0xE6;  // (free above the picture)
-// Trig + quarter-square tables of the live shapes: same fixed address in bank7, core and bank2
-// (the "G" tables: 0.62 x 63 in bank7/core, 1/sqrt(3) x 63 in bank2 - the cube's vertex scale)
+// Trig + quarter-square tables of the live shapes: same fixed address in bank1 and bank2
+// (the "G" tables: 0.62 x 63 in bank1 - diamond, 1/sqrt(3) x 63 in bank2 - cube and pyramid)
 // (cos = sin 90 degrees = 33 entries later: one 165-entry table for both), LvMul = the multiply
 var LvSin = 0xF000, LvCos = 0xF021, LvSinG = 0xF0A5, LvCosG = 0xF0C6, LvSq = 0xF14A, LvMul = 0xF1C9;  // (gen_sphere.py ADDR_LV)
 
@@ -100,11 +101,6 @@ data SphModeSpeed { 0x40   0x80   0x50   0xC0 }
 
 // Shape per song mood:      CALM    FULL    BREAK   BUILD
 data SphModeShape {         1       2       3       0 }     // 0 sphere, 1 cube, 2 pyramid, 3 diamond
-
-// Sphere frame (0..87, two banks) for the common animation frame 0..131 (same angle)
-data SphFrameMap {
-    for x=0..131 eval [ floor(x*2/3) ]
-}
 
 // Implosion curve over the transition timer (index 0..24, counts down):
 // 24..13 collapse (level 0 -> 5, 2 frames per level), 12 = shape switch, 12..1 grow back
@@ -140,8 +136,8 @@ data SphSongMode {
 
 
 // ---------------------------------------------------------------------------
-//  Point routine - instantiated in banks 5-7 by sphere_data.k65 (sph_proc5..7)
-//  in:  ptrC = animation frame, ptrD = scale table, sp_i = next point (x2), sp_tmin
+//  Point routines - instantiated in the data banks by sphere_data.k65
+//  in:  ptrD = scale table, sp_i = next point, sp_tmin (+ ptrC, sp_flip for the sphere)
 // ---------------------------------------------------------------------------
 // Implosion: A = signed offset from the centre, scaled by 1 / 2^sp_sh (sp_sh 5 = 0).
 inline sph_shrink {
@@ -183,19 +179,27 @@ inline sph_place {
     .skip:
 }
 
-// Sphere: every point is stored in the frame (2 bytes). sp_i = byte index.
+// Sphere (bank5): 30 points symmetric under p -> -p and under the 180-degree turn about X,
+// so only one point of each opposite pair is stored (15 x 2 bytes, frames of 32 bytes), and
+// frame f + 66 is frame f with every far bit flipped (the turn keeps the set, see gen_sphere.py).
+// Point 2k = stored point k, point 2k+1 = its opposite (x byte negated whole: -x and the far bit
+// flipped, y byte 128 - y). sp_flip = 0x80 in the second half turn.
 inline sph_body {
     {
-        a=sp_i a?[SPH_NPTS*2] =={ goto .done }                  // all points done
+        a=sp_i a?[SPH_NPTS] =={ goto .done }                    // all points done
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        y=sp_i a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a
+        a=sp_i a&0xFE y=a a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a
+        a=sp_i a>> <{ goto .stored }
+        a=tmp4 a^0xFF c- a+129 tmp4=a a=tmp3 a^0xFF c- a+1 tmp3=a   // the opposite point
+        .stored:
+        a=tmp3 a^sp_flip tmp3=a
         sph_place
-        a=sp_i c- a+2 sp_i=a
+        sp_i++
     } always                                                    // (loop too long for a branch:
     .done:                                                      //  exits jump via goto)
 }
 
-// Logos (bank7): Atari (shape 4) and Altair (shape 5) point sets in the same tables, each
+// Logos (bank1): Atari (shape 4) and Altair (shape 5) point sets in the same tables, each
 // ended by LogoY = 0xFF, sp_lbase = start index. Flat, spinning around the vertical axis.
 // A flat object has no per-point depth worth shading (at face-on every point is at depth 0,
 // the left/right halves would swap bright/dim instantly), so all points are "front" (stable
@@ -219,38 +223,12 @@ inline logo_body {
     .done:
 }
 
-// Vertex shapes (cube, ...): the frame holds only the rotated vertices (2 bytes each);
-// every drawn point is a vertex pair (ShpPairA/B = byte offsets in the frame, 0xFF ends
-// the list): a vertex is (i,i), an edge midpoint (i,j) - with orthographic projection the
-// midpoint on screen is just the average; bit 6 of ShpPairB = quarter point (the midpoint
-// averaged with vertex A once more). Far side only if both ends are. sp_i = point.
-inline shape_body {
-    {
-        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i
-        y=ShpPairA,x <0{ goto .done }                           // end of the point list
-        a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a                 // vertex A
-        a=ShpPairB,x a&0x3F y=a
-        a=(ptrC),y tmp1=a a&tmp3 a&0x80 tmp2=a                  // vertex B x, far only if both
-        a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
-        y++ a=(ptrC),y c- a+tmp4 a>> tmp4=a
-        a=ShpPairB,x a&0x40 !={                                 // quarter point: average the
-            y=ShpPairA,x                                        //  midpoint with vertex A again
-            a=(ptrC),y tmp1=a a&tmp3 a&0x80 tmp2=a
-            a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
-            y++ a=(ptrC),y c- a+tmp4 a>> tmp4=a
-        }
-        sph_place
-        sp_i++
-    } always
-    .done:
-}
 
 
 
 
 // ---------------------------------------------------------------------------
-//  Live diamond (bank7): the rotation is computed on the 6502 every frame.
+//  Live diamond (bank1): the rotation is computed on the 6502 every frame.
 //  Same rotation as the precomputed shapes (tools/gen_sphere.py rotate(), turns X/Y/Z 1/2/1):
 //  R = Rz(a) * Ry(2a) * Rx(a), a = frame * 2pi/132. The diamond's vertices are
 //  +-T (tip, column 1 of R), +-U, +-W (girdle, 0.62 x columns 0 and 2):
@@ -315,22 +293,22 @@ inline dia_avg {
     a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
 }
 
-// Point list = vertex ids: ShpPairA = vertex A, ShpPairB = vertex B (edge midpoint), 0x80 = lone
+// Point list = vertex ids: DiaPairA = vertex A, DiaPairB = vertex B (edge midpoint), 0x80 = lone
 // vertex, or 0x40 = quarter point: the PREVIOUS point (the midpoint of the same edge, still in
 // tmp3/tmp4 - sph_place only reads them) averaged with vertex A once more. When a phase starts
 // at a quarter point, that midpoint is rebuilt first (tmp3/tmp4 did not survive the break).
 inline dia_body {
-    x=sp_i y=ShpPairA,x <0{ goto .done }                        // (all points done)
+    x=sp_i y=DiaPairA,x <0{ goto .done }                        // (all points done)
     dia_neg
-    a=ShpPairB,x a&0x40 =={ goto .loop }
-    x-- y=ShpPairA,x dia_fetch3 x=sp_i x-- y=ShpPairB,x dia_fetch dia_avg
+    a=DiaPairB,x a&0x40 =={ goto .loop }
+    x-- y=DiaPairA,x dia_fetch3 x=sp_i x-- y=DiaPairB,x dia_fetch dia_avg
     .loop:
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=ShpPairA,x <0{ goto .done }                    // end of the point list
-        a=ShpPairB,x a&0x40 !={ dia_fetch goto .avg }           // quarter point
+        x=sp_i y=DiaPairA,x <0{ goto .done }                    // end of the point list
+        a=DiaPairB,x a&0x40 !={ dia_fetch goto .avg }           // quarter point
         dia_fetch3                                              // vertex A
-        x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
+        x=sp_i a=DiaPairB,x <0{ goto .place }                   // lone vertex
         y=a dia_fetch                                           // edge midpoint: + vertex B
         .avg:
         dia_avg
@@ -343,9 +321,10 @@ inline dia_body {
 
 
 // ---------------------------------------------------------------------------
-//  Live pyramid (core): apex T = column 1 of R, base centre h = -T/2, base corners
-//  h +- (G0 + G2) = +-P and h +- (G0 - G2) = +-Q with G0/G2 = 0.62 x columns 0/2
-//  (pyramid: apex (0,1,0), corners (+-0.62, -0.5, +-0.62)). Not symmetric like the diamond,
+//  Live pyramid (bank2): apex T = column 1 of R, base centre h = -T/2, base corners
+//  h +- (G0 + G2) = +-P and h +- (G0 - G2) = +-Q with G0/G2 = G x columns 0/2 (G = 1/sqrt(3): bank2's LvSinG/LvCosG,
+//  shared with the cube)
+//  (pyramid: apex (0,1,0), corners (+-G, -0.5, +-G)). Not symmetric like the diamond,
 //  so the corners need their real z for the far-side bits: 14 multiplies (~1100 cycles).
 //  Kept: T, +P, +Q (x byte | far bit, y byte); the far bits of -P / -Q ride in bit 7 of the
 //  +P / +Q y bytes (y bytes are 1..127). -P = 2h - P = -T - P -> byte 192 - T - P, per phase.
@@ -354,7 +333,7 @@ inline pyr_setup {
     a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
     else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
     y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
-    a=LvSinG,y a<< a^0xFF c- a+1 pyr_g=a                 // G0 z = -0.62 sy (double units)
+    a=LvSinG,y a<< a^0xFF c- a+1 pyr_g=a                 // G0 z = -G sy (double units)
     x=sp_frame                                          // X and Z angle = frame (X stays = index)
     // apex T (as the diamond's tip), h = -T/2
     a=LvSin,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a
@@ -367,19 +346,19 @@ inline pyr_setup {
     a=LvSin,x tmp1=a a=dia_cy tmp2=a call LvMul             // z = sx*cy
     tmp4=a dia_half a^0xFF c- a+1 pyr_hz=a a=tmp4 a&0x80 a|dia_tx dia_tx=a
     // corners, z first: far bits of +P/+Q -> their x bytes, of -P/-Q -> bit 7 of the y bytes
-    a=LvCosG,x tmp1=a a=dia_cy tmp2=a call LvMul tmp4=a     // G2 z = 0.62 cx*cy
+    a=LvCosG,x tmp1=a a=dia_cy tmp2=a call LvMul tmp4=a     // G2 z = G cx*cy
     a=pyr_hz c- a+pyr_g c- a+tmp4 a&0x80 dia_ux=a        // +P = h + G0 + G2
     a=pyr_hz c+ a-pyr_g c+ a-tmp4 a&0x80 dia_uy=a        // -P = h - G0 - G2
     a=pyr_hz c- a+pyr_g c+ a-tmp4 a&0x80 dia_wx=a        // +Q = h + G0 - G2
     a=pyr_hz c+ a-pyr_g c- a+tmp4 a&0x80 dia_wy=a        // -Q = h - G0 + G2
-    a=LvCosG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a   // t2 = 0.62 cx*sy
-    // x: G0 = 0.62 cy*cz, G2 = t2*cz + 0.62 sx*sz
+    a=LvCosG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a   // t2 = G cx*sy
+    // x: G0 = G cy*cz, G2 = t2*cz + G sx*sz
     a=dia_cyg tmp1=a a=LvCos,x tmp2=a call LvMul pyr_g=a
     a=dia_t tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
     a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call LvMul c- a+tmp4 tmp4=a
     a=pyr_g c+ a-tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_wx dia_wx=a
     a=pyr_g c- a+tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_ux dia_ux=a
-    // y: G0 = 0.62 cy*sz, G2 = t2*sz - 0.62 sx*cz
+    // y: G0 = G cy*sz, G2 = t2*sz - G sx*cz
     a=dia_cyg tmp1=a a=LvSin,x tmp2=a call LvMul pyr_g=a
     a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
     a=LvSinG,x tmp1=a a=LvCos,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 tmp4=a
@@ -400,23 +379,23 @@ inline pyr_prep {
 inline pyr_fetch { x=PyrZp,y a=zp0,x tmp1=a a=zp1,x a&0x7F tmp2=a }    // -> tmp1, tmp2
 inline pyr_fetch3 { x=PyrZp,y a=zp0,x tmp3=a a=zp1,x a&0x7F tmp4=a }   // -> tmp3, tmp4
 
-// Like dia_body, plus ShpPairB = B | 0x20: a quarter point that does not follow its midpoint
+// Like dia_body, plus PyrPairB = B | 0x20: a quarter point that does not follow its midpoint
 // (the second quarter point of a slant edge): midpoint A-B, then averaged with A again.
 inline pyr_body {
-    x=sp_i y=ShpPairA,x <0{ goto .done }                        // (all points done)
+    x=sp_i y=PyrPairA,x <0{ goto .done }                        // (all points done)
     pyr_prep
-    x=sp_i a=ShpPairB,x a&0x40 =={ goto .loop }
-    x-- y=ShpPairA,x pyr_fetch3 x=sp_i x-- y=ShpPairB,x pyr_fetch dia_avg
+    x=sp_i a=PyrPairB,x a&0x40 =={ goto .loop }
+    x-- y=PyrPairA,x pyr_fetch3 x=sp_i x-- y=PyrPairB,x pyr_fetch dia_avg
     .loop:
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=ShpPairA,x <0{ goto .done }                    // end of the point list
-        a=ShpPairB,x a&0x40 !={ pyr_fetch goto .avg }           // quarter point (after its midpoint)
+        x=sp_i y=PyrPairA,x <0{ goto .done }                    // end of the point list
+        a=PyrPairB,x a&0x40 !={ pyr_fetch goto .avg }           // quarter point (after its midpoint)
         pyr_fetch3                                              // vertex A
-        x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
+        x=sp_i a=PyrPairB,x <0{ goto .place }                   // lone vertex
         a&0x1F y=a pyr_fetch dia_avg                            // edge midpoint: + vertex B
-        x=sp_i a=ShpPairB,x a&0x20 =={ goto .place }
-        y=ShpPairA,x pyr_fetch                                  // quarter point: with A again
+        x=sp_i a=PyrPairB,x a&0x20 =={ goto .place }
+        y=PyrPairA,x pyr_fetch                                  // quarter point: with A again
         .avg:
         dia_avg
         .place:
@@ -488,15 +467,15 @@ inline cub_fetch3 {                                     // -> tmp3, tmp4
     else { tmp4=a a=zp0,x }
     tmp3=a
 }
-// points: vertices (ShpPairB = 0x80) and edge midpoints (ShpPairB = vertex B)
+// points: vertices (CubPairB = 0x80) and edge midpoints (CubPairB = vertex B)
 inline cub_body {
-    x=sp_i a=ShpPairA,x <0{ goto .done }                        // (all points done)
+    x=sp_i a=CubPairA,x <0{ goto .done }                        // (all points done)
     cub_prep
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=ShpPairA,x <0{ goto .done }                    // end of the point list
+        x=sp_i y=CubPairA,x <0{ goto .done }                    // end of the point list
         cub_fetch3                                              // vertex A
-        x=sp_i a=ShpPairB,x <0{ goto .place }                   // lone vertex
+        x=sp_i a=CubPairB,x <0{ goto .place }                   // lone vertex
         y=a cub_fetch dia_avg                                   // edge midpoint: + vertex B
         .place:
         sph_place

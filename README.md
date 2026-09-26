@@ -74,7 +74,7 @@ make clean
 - `effects/plasma.k65` – plazma (bank `bank2`, wywoływana przez `far plasma`)
 - `effects/eqsine.k65` – helisa-equalizer na sprite'ach (bank `bank3`)
 - `effects/sphere_defs.k65`, `effects/sphere_data.k65` (wygenerowany), `effects/sphere.k65` – kula 3D
-  (bank `bank4` + dane w `bank5-7`); po zmianie parametrów kuli: `python3 tools/gen_sphere.py > effects/sphere_data.k65`
+  (bank `bank4` + dane w `bank5`, `bank2`, `bank1`); po zmianie parametrów kuli: `python3 tools/gen_sphere.py > effects/sphere_data.k65`
 - `util.k65` – m.in. `FxStart`/`FxUpdate`/`FxFadeLevel`: przycisk + fade in/out
 - `main.k65`, `_defs.k65`, `_gamedefs.k65`, `util.k65`, `music/` – jak w szablonie
 - `docs/` – skrócona wiedza o K65 i Atari 2600 (kontekst dla AI), `CLAUDE.md` – punkt wejścia dla AI

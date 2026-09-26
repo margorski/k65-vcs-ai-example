@@ -14,7 +14,7 @@
 
 // preallocate all banks
 bank core;				data _Bank0 { 0 }
-bank audio;				data _Bank1 { 0 }
+bank bank1;				data _Bank1 { 0 }
 bank bank2;             data _Bank2 { 0 }
 bank bank3;			    data _Bank3 { 0 }
 bank bank4; 			data _Bank4 { 0 }

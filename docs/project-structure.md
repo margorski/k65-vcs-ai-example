@@ -13,9 +13,9 @@ k65-vcs-ai-example/
 ├── effects/plasma.k65   plasma (bank bank2, called with `far plasma`)
 ├── effects/eqsine.k65   music-reactive sprite helix (bank bank3, `far eqsine`)
 ├── effects/sphere_defs.k65  sphere: constants, RAM, table addresses, point routine body
-├── effects/sphere_data.k65  sphere: GENERATED animation + tables for banks 5-7 (tools/gen_sphere.py)
+├── effects/sphere_data.k65  sphere: GENERATED data banks 5, 2, 1 (tools/gen_sphere.py)
 ├── effects/sphere.k65       sphere: kernel + music (bank4, `far sphere`)
-├── music/               tracker-style player (music_player_mini.k65) + song data, in bank "audio"
+├── music/               tracker-style player (music_player_mini.k65) + song data, in bank "core"
 ├── tools/vcs_frame_check.py   headless timing checker + frame renderer (py65 via uv)
 ├── tools/song_analysis.py     plays the whole song headless, prints per-section audio features
 ├── tools/gen_sphere.py        precomputes the sphere/shape rotation + live-diamond tables -> sphere_data.k65
@@ -63,7 +63,7 @@ func my_effect {
     goto my_effect_enter          // skip sync1: the previous effect returned in overscan,
     {                             //  running sync1 again would give a 346-line frame
         sync1                     // overscan: ~34 lines of free time
-            far song_player       // music tick (lives in bank "audio")
+            far song_player       // music tick (lives in bank "core")
             BreakOnSeq            // `return` when song reached seqbrk
             FxUpdate              // FIRE/SELECT edge -> fade out -> `return` when black
         my_effect_enter:          // global label (local labels break across `far`)
@@ -102,7 +102,9 @@ Update the map comment when you claim new addresses - `var` does not allocate an
 ## Music
 
 `music/music_player_mini.k65` plays `music/song_mini_sv18.k65` (4 sequences over 2 TIA channels).
-`song_player` is called once per frame (`far`, since it's in bank "audio").
+`song_player` is called once per frame (`far` from effects in other banks; it lives in bank "core").
+Bank map: core main + music, bank1 diamond + logos, bank2 cube + pyramid (+ plasma), bank3 eqsine,
+bank4 sphere kernel, bank5 sphere data, bank6 + bank7 free.
 Song loops at sequence 102 (`song_seq_wrap`). `seqbrk=a=0xFF` = the effect never ends.
 The player also stores what it writes to AUDVx/AUDFx/AUDCx into `mus_v0/f0/c0/v1/f1/c1` - use them for
 music-reactive effects.

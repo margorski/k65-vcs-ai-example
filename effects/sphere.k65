@@ -2,8 +2,8 @@
 //  Sphere - tumbling 3D sphere of "flying pixels"
 //
 //  30 points on a sphere rotating around X, Y and Z at once. The rotation is
-//  precomputed (tools/gen_sphere.py -> effects/sphere_data.k65, 132 frames in
-//  banks 5-7); at runtime the 6502 only picks the frame, scales it (pulse) and
+//  precomputed (tools/gen_sphere.py -> effects/sphere_data.k65, bank5: packed by
+//  symmetry, 66 frames x 15 points); at runtime the 6502 only picks the frame, scales it (pulse) and
 //  sorts the points into the kernel's object slots. The cube, pyramid and diamond are the
 //  exception: their rotation is computed live every frame (cub_/pyr_/dia_setup, sphere_defs.k65).
 //
@@ -31,7 +31,7 @@
 //  fades in ~16 frames); hat (AUDC 8 attack, ch0 or ch1) -> the sphere pulses
 //  bigger (4 scale steps up to 120%, ~0.3 s).
 //
-//  Bank4 (code, kernel), banks 5-7 (animation + lookup tables + point routine).
+//  Bank4 (code, kernel), data banks: bank5 sphere, bank2 cube + pyramid, bank1 diamond + logos.
 // ============================================================================
 
 bank bank4;
@@ -100,17 +100,17 @@ inline sph_points {
     a>> c- a+&>SphScaleA ptrD+1=a
     a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
     a=sp_shape !={
-        a?2 <{ far shape_proc2 }                    // cube: vertex shape in bank2
-        else { a?2 =={ far shape_procC }            // pyramid: bank core
-               else { a?3 =={ far shape_proc7 }     // diamond: bank7, rotated live
-                      else { far logo_proc7 } } }   // Atari logo: bank7
+        a?2 <{ far cub_proc2 }                      // cube: bank2 (rotated live)
+        else { a?2 =={ far pyr_proc2 }              // pyramid: bank2 (rotated live)
+               else { a?3 =={ far dia_proc1 }       // diamond: bank1 (rotated live)
+                      else { far logo_proc1 } } }   // logos: bank1
     } else {
-        // sphere: 88 frames in banks 5-6 -> bank + frame in bank
-        x=sp_frame a=SphFrameMap,x
-        x=0 a?[SPH_FPB] >={ c+ a-[SPH_FPB] x++ }
-        y=a a>> a>> c- a+&>SphAnimA ptrC+1=a        // + frame/4 pages
-        a=y a>>> a>>> a>>> a&0xC0 ptrC=a            // (frame&3)*64 - frames are 64 bytes (padded)
-        x?1 <{ far sph_proc5 } else { far sph_proc6 }
+        // sphere (bank5): 66 stored frames of 32 bytes, the second half turn = far bits flipped
+        x=0 a=sp_frame a?[SPH_FRAMES/2] >={ c+ a-[SPH_FRAMES/2] x=0x80 }
+        sp_flip=x
+        y=a a<< a<< a<< a<< a<< ptrC=a               // (frame*32) low byte
+        a=y a>> a>> a>> c- a+&>SphAnimA ptrC+1=a    // + frame/8 pages
+        far sph_proc5
     }
 }
 
@@ -196,8 +196,8 @@ func sphere {
             // (+ the live diamond's rotation), timed by the RIOT timer instead of counted lines
             TIM64T=a=[SPH_TOP_TIM]
             sph_music
-            a=sp_shape a?3 =={ far dia_setup7 }       // live shapes: rotate the vertices
-            else { a?2 =={ far pyr_setupC } else { a?1 =={ far cub_setup2 } } }
+            a=sp_shape a?3 =={ far dia_setup1 }       // live shapes: rotate the vertices
+            else { a?2 =={ far pyr_setup2 } else { a?1 =={ far cub_setup2 } } }
             timwait wsync                       // = line SPH_TOP
             TIM64T=a=[SPH_BOT_TIM]              // re-armed for the rest of the picture: same end line,
             x=0                                 //  64-cycle units for the point phase below (armed

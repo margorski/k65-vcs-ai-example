@@ -111,9 +111,9 @@ SUPERCHIP <- 0
 far_jump_stubs <- []
 
 // far-call stubs at fixed addresses (project addition): the sphere banks 5-6 are full except one
-// 256-byte block (F000-F0FF) that must stay whole for sph_procN - a stub placed by the allocator
+// free block that must stay whole for sph_proc5 - a stub placed by the allocator
 // could land in its middle. FFC5-FFEC is kept free in the sphere banks for these.
-FIXED_STUBS <- { sph_proc5 = 0xFFC5, sph_proc6 = 0xFFCF }
+FIXED_STUBS <- { sph_proc5 = 0xFFC5 }
 
 
 
