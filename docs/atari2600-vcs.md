@@ -132,6 +132,17 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
 - **Many missiles from two**: position M0/M1 once at the top, then move them per slot with HMMx on
   the slot's HMOVE (-8..+7 px per slot) and switch ENAMx per slot -> 32 sparks. HMMx ignores bits
   0-3 and ENAMx uses only bit 1, so one table byte can hold both the move and the enable.
+- **3D point objects** (`effects/sphere*.k65`): precompute the rotation offline (ROM is cheap, 6502
+  multiplies are not) and at runtime only pick/scale frames and sort points into bands. Band of 11
+  lines: position P0 P1 M0 M1 BL (one line each), HMOVE line, then each object's dot on its own line
+  (2 lines tall, switched on at the line start - variable timing is fine there - and off in the
+  next positioning line's preamble, which shifts that object 3 cycles = 9 px, compensated in the data).
+  An empty slot is just never switched on. Depth: two colour registers (COLUP0 for P0/M0 + COLUPF for
+  BL = bright, COLUP1 for P1/M1 = dim) -> far-side points prefer P1/M1.
+- **Use the idle picture time**: after the last drawn line the CPU just waits for the picture timer.
+  Start the next frame's work there (the kernel has already consumed its data), and clear per-band
+  data inside the kernel right after each band is drawn. Big tables used from several banks: same fixed
+  `address` in every bank + a `var` alias, plus one reference to each label or the linker drops them.
 - **Music reactivity**: TIA gives no spectrum, but the player knows what it plays: copy AUDVx/AUDFx
   to RAM each frame. AUDF (pitch divider) -> band, AUDV -> energy (spread to neighbours, decay per
   frame), a jump of the summed volume -> beat trigger.

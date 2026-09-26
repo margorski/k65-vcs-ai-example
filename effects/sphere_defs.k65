@@ -1,0 +1,83 @@
+// ============================================================================
+//  Sphere - shared definitions: constants, RAM, fixed table addresses, and the
+//  point routine body (sph_body) that sphere_data.k65 instantiates in banks 5-7.
+//  Must be compiled BEFORE sphere_data.k65, which must come BEFORE sphere.k65:
+//  K65 crashes on a `far` call to a function that is defined later.
+// ============================================================================
+
+bank bank4;
+
+[ SPH_NPTS = 30 ]           // points (must match tools/gen_sphere.py)
+[ SPH_FRAMES = 132, SPH_FPB = 44 ]
+[ SPH_NB = 15, SPH_TOP = 30 ]   // bands, blank lines above the dot area
+[ SPH_CX = 80, SPH_CY = 82 ]    // centre: pixel / line within the dot area
+[ SPH_SPEED = 0x60 ]        // base speed in 1/256 animation frames per video frame
+// Points are processed wherever CPU time is left, one running index for the frame:
+// below the sphere (still in the picture, the CPU is idle there) -> overscan -> vblank.
+// Before every point the routine checks the RIOT timer and stops early when fewer than
+// sp_tmin units are left in the current phase; the next phase continues from there.
+// (Points still left at the end of vblank are simply not shown for that one frame.)
+[ SPH_TMIN_PIC = 2 ]        // picture phase: T1024T units (>= 1024 cycles left)
+[ SPH_TMIN_BLANK = 8 ]      // overscan/vblank: TIM64T units (INTIM = n guarantees only >(n-1)*64 cycles:
+                            //  8 -> >= 449; worst point ~250 + return/bank switch ~50 -> 150 spare.
+                            //  6 was not enough in Stella: vblank ended with ~40 cycles left)
+
+// Fixed addresses of the tables in banks 5-7 (same in every bank, see gen_sphere.py)
+var SphAnimA = 0xF100, SphScaleA = 0xFC00, SphLineBand = 0xFE00;
+var SphCandBase = 0xFEA8, SphCandOff = 0xFEE4, SphLineCand = 0xFF20;
+[ SPH_BACKROWS = 30 ]       // back points use candidate rows 5-9 (5 rows x 6)
+
+// RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
+var sp_bx = 0x80;
+var sp_bx0 = 0x80, sp_bx1 = 0x8F, sp_bx2 = 0x9E, sp_bx3 = 0xAD, sp_bx4 = 0xBC;
+var sp_frac  = 0xCB;        // animation position, fraction
+var sp_frame = 0xCC;        // animation frame 0..SPH_FRAMES-1
+var sp_boost = 0xCD;        // kick speed surge 32 -> 0 (x4 = speed add in 1/256 frames)
+var sp_pulse = 0xCE;        // hat pulse, decays (scale level = pulse/4)
+var sp_i     = 0xCF;        // point routine: byte index into the frame (2 per point)
+var sp_pv0   = 0xD5;        // previous volumes (attack detection)
+var sp_pv1   = 0xD6;
+var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
+var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
+
+// Band colours (top -> bottom: light from above), 8 fade levels x 32:
+// [0..15] front (bright, P0/M0/BL), [16..31] back (6 luminance steps darker, P1/M1)
+data SphCol {
+    align 256
+    for x=0..255 eval [ lvl = floor(x/32), b = x%16, back = floor(x/16)%2,
+        lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
+        lvl==0 ? 0 : (lum < 0 ? 0x90 : 0x90 + (lum & 14)) ]
+}
+
+
+// ---------------------------------------------------------------------------
+//  Point routine - instantiated in banks 5-7 by sphere_data.k65 (sph_proc5..7)
+//  in:  ptrC = animation frame, ptrD = scale table, sp_i = next point (x2), sp_tmin
+// ---------------------------------------------------------------------------
+inline sph_body {
+    {
+        a=sp_i a?[SPH_NPTS*2] == break                              // all points done
+        a=INTIM a?sp_tmin < break                                   // not enough time left here
+        y=sp_i a=(ptrC),y tmp3=a a&0x7F                             // bit 7 = far side
+        y=a a=(ptrD),y c- a+[SPH_CX] tmp1=a                         // screen x
+        y=sp_i y++ a=(ptrC),y y=a a=(ptrD),y c- a+[SPH_CY] y=a      // line in the dot area
+        a=SphLineBand,y tmp2=a                                      // band
+        a=tmp3 <0{                                                  // candidate list: back points
+            a=SphLineCand,y c- a+[SPH_BACKROWS] x=a                 //  prefer P1/M1 (dim colour),
+        } else {
+            x=SphLineCand,y                                         //  front ones P0/M0/BL (bright)
+        }
+        {
+            a=SphCandBase,x <0 break                                // band full: drop the point
+            c- a+tmp2 y=a
+            a=sp_bx,y =={                                           // free slot
+                a=tmp1 c+ a-SphCandOff,x sp_bx,y=a
+                break
+            }
+            x++
+        } always
+        a=sp_i c- a+2 sp_i=a
+    } always
+}
+
+

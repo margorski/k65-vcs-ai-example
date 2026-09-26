@@ -12,9 +12,13 @@ k65-vcs-ai-example/
 ├── effects/rainbow.k65  rainbow background (bank core)
 ├── effects/plasma.k65   plasma (bank bank2, called with `far plasma`)
 ├── effects/eqsine.k65   music-reactive sprite helix (bank bank3, `far eqsine`)
+├── effects/sphere_defs.k65  sphere: constants, RAM, table addresses, point routine body
+├── effects/sphere_data.k65  sphere: GENERATED animation + tables for banks 5-7 (tools/gen_sphere.py)
+├── effects/sphere.k65       sphere: kernel + music (bank4, `far sphere`)
 ├── music/               tracker-style player (music_player_mini.k65) + song data, in bank "audio"
 ├── tools/vcs_frame_check.py   headless timing checker + frame renderer (py65 via uv)
 ├── tools/song_analysis.py     plays the whole song headless, prints per-section audio features
+├── tools/gen_sphere.py        precomputes the sphere rotation -> effects/sphere_data.k65
 ├── docs/                this knowledge base
 └── bin/                 build output: demo.bin (32K F4), demo.lst, demo.sym, demo.gmap, frames.png
 ```
@@ -45,6 +49,7 @@ main {
         // rainbow            // effect in the same bank: plain call (currently disabled)
         // far plasma         // effect in another bank: far call (currently disabled)
         far eqsine
+        far sphere
     } always
 }
 ```
@@ -81,6 +86,7 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0x80-0xCF` eqsine (`eq_x0/x1/c0/c1/en[16]`), `0xE8-0xEF` eqsine state; during the frame
   eqsine reuses the scratch bytes `0xE1-0xE7` + `0xEE` for scanner/ball/spark kernel parameters
 - (`0x80-0xCF` is shared per-effect scratch: every effect initialises what it uses)
+- `0x80-0xCF`, `0xD5-0xD9` sphere (5 x 15 band positions + animation/music state)
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)
@@ -123,4 +129,7 @@ Note the player uses `ptrA`/`ptrB` as scratch - re-set any effect pointers kept 
    PF priority, VDEL, sprite copies. TIA writes are timed at the end of the instruction.
    `--press a,b` holds FIRE for 3 frames at those frames, `--show x,y` picks rendered frames.
 4. Inspect `bin/demo.lst` to confirm generated 6502 code / cycle counts of the kernel loop.
+   To find CPU headroom, log the cycles of INTIM reads in the emulator: each polling run of `timwait`
+   = the slack of that phase (overscan / vblank / picture). A run that starts after the timer hit 0
+   means an overrun - and `timwait` can then miss the 0 and add 15-25 lines, so keep slack > ~100.
 5. The user runs `make run` for the real picture + sound.

@@ -53,6 +53,8 @@ data   name { ... }        // bytes (see 5)
 - `far name` - call a func that lives in another bank (linker generates bankswitch stub).
   `far goto label` - far jump. Never put `far` inside an inline used from another bank.
 - `call addr` = raw `JSR addr`, `goto label` = JMP, `goto (ptr)` = JMP indirect.
+  **A `far` call to a function defined later (further down / in a later file) crashes the compiler**
+  - define the callee first (order files in files.lst accordingly).
   `goto main` crashes the compiler - put a label (`.full_reset:`) at the top of main and jump to it.
   Jumping into the middle of a loop is fine: `goto fx_enter  { ... fx_enter: ... } always`
   (use a global label if a `far` call sits between the goto and the label).

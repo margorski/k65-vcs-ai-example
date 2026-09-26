@@ -13,6 +13,14 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   section-coloured flashing background, playfield scanner line (speed per section, hops on kicks),
   ball = karaoke ball bouncing on the scanner, M0/M1 = spark bursts on kicks.
   The eqsine kernel is 228 lines (limit ~229) and slot line 3 is nearly full - always re-run `make check`.
+- `effects/sphere*.k65` (bank4 + data banks 5-7) - tumbling 3D point sphere: rotation precomputed by
+  `tools/gen_sphere.py` into `effects/sphere_data.k65` (GENERATED - regenerate, don't edit); runtime picks
+  the frame, scales it (hat pulse), sorts points into 15 bands x 5 objects (P0 P1 M0 M1 BL); kick = speed surge.
+  Depth: far-side points (bit 7 of the x byte) prefer P1/M1 = dim colour. CPU is tight: point processing is
+  split between the idle lines BELOW the sphere (next frame), overscan and vblank (adaptive: stops when the RIOT timer runs low, next phase continues) - measure
+  the slack (see docs/project-structure.md) after any change there.
+  File order in files.lst matters: sphere_defs -> sphere_data -> sphere (far call to a later function crashes K65).
+Enabled in main.k65: eqsine -> sphere.
 
 ## Knowledge base - read before editing K65 code
 

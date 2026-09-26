@@ -5,5 +5,6 @@ main {
         // rainbow              // effects/rainbow.k65 (bank core)  - disabled, re-enable by uncommenting
         // far plasma           // effects/plasma.k65  (bank bank2) - disabled
         far eqsine              // effects/eqsine.k65  (bank bank3)
+        far sphere              // effects/sphere.k65  (bank bank4, data in banks 5-7)
     } always                    // FIRE / SELECT switches to the next effect
 }

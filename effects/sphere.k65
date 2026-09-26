@@ -1,0 +1,142 @@
+// ============================================================================
+//  Sphere - tumbling 3D sphere of "flying pixels"
+//
+//  30 points on a sphere rotating around X, Y and Z at once. The rotation is
+//  precomputed (tools/gen_sphere.py -> effects/sphere_data.k65, 132 frames in
+//  banks 5-7); at runtime the 6502 only picks the frame, scales it (pulse) and
+//  sorts the points into the kernel's object slots.
+//
+//  Kernel: 15 bands of 11 lines. In every band all five objects are
+//  re-positioned (P0 P1 M0 M1 BL, one line each), one HMOVE line applies the
+//  fine positions and each object then draws one 2x2 px dot on its own line:
+//      r0-r4 position, r5 HMOVE + colour, dots: P0 r6, P1 r7, M0 r8, M1 r9, BL r10
+//  -> up to 75 dots, 5 per band. An empty slot (x = 0) simply isn't switched on.
+//  A point goes to the slot whose dot line is nearest to its y (next nearest if
+//  taken, dropped if the band is full).
+//
+//  Depth: points on the far side go to P1/M1 (dim band colour), near ones to
+//  P0/M0/BL (bright) - the generator marks them in bit 7 of the x byte.
+//
+//  Music: kick (AUDC 15 attack on ch0) -> the rotation surges (up to ~2.3x,
+//  fades in ~16 frames); hat (AUDC 8 attack, ch0 or ch1) -> the sphere pulses
+//  bigger (4 scale steps up to 120%, ~0.3 s).
+//
+//  Bank4 (code, kernel), banks 5-7 (animation + lookup tables + point routine).
+// ============================================================================
+
+bank bank4;
+
+// ---------------------------------------------------------------------------
+//  Per frame
+// ---------------------------------------------------------------------------
+
+// kick -> speed boost, hat -> pulse; advance the animation
+inline sph_music {
+    // attack = volume rises by >= 4 (kick) / >= 2 (hats are quiet, e.g. in the intro)
+    a=mus_v0 a&15 y=a c+ a-sp_pv0 sp_pv0=y
+    >={ tmp1=a
+        a=mus_c0 a&15 a?15 =={ a=tmp1 a?4 >={ sp_boost=a=32 } }      // kick: speed surge
+        else { a?8 =={ a=tmp1 a?2 >={ sp_pulse=a=15 } } }            // hat: pulse
+    }
+    a=mus_v1 a&15 y=a c+ a-sp_pv1 sp_pv1=y
+    >={ tmp1=a a=mus_c1 a&15 a?8 =={ a=tmp1 a?2 >={ sp_pulse=a=15 } } }
+
+    a=sp_pulse !={ sp_pulse-- }
+    a=sp_boost !={ c+ a-2 <{ a=0 } sp_boost=a }  // surge fades in ~16 frames
+
+    // position += SPH_SPEED + boost*4 (8.8 fixed point, wraps at SPH_FRAMES)
+    a=sp_boost a<< a<< c- a+[SPH_SPEED] tmp1=a
+    a=0 a+0 tmp2=a                                  // carry -> +1 frame
+    a=sp_frac c- a+tmp1 sp_frac=a
+    a=sp_frame a+tmp2
+    a?[SPH_FRAMES] >={ c+ a-[SPH_FRAMES] }
+    sp_frame=a
+}
+
+// next points of the frame (from sp_i, while time is left) -> band slots
+inline sph_points {
+    a=sp_pulse a>> a>> tmp1=a                       // scale level 0..3
+    a>> c- a+&>SphScaleA ptrD+1=a
+    a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
+    // bank + frame in bank
+    x=0 a=sp_frame
+    { a?[SPH_FPB] < break c+ a-[SPH_FPB] x++ } always
+    y=a a>> a>> c- a+&>SphAnimA ptrC+1=a            // + frame/4 pages
+    a=y a>>> a>>> a>>> a&0xC0 ptrC=a                // (frame&3)*64 - frames are 64 bytes (padded)
+    x?1 <{ far sph_proc5 } else { x?1 =={ far sph_proc6 } else { far sph_proc7 } }
+}
+
+
+
+// ---------------------------------------------------------------------------
+//  Kernel
+// ---------------------------------------------------------------------------
+
+// fine/coarse positioning after the line's preamble: A = x input
+inline SphDivP0 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hp0h=a *2 rp0=a } }
+inline SphDivP1 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hp1h=a *2 rp1=a } }
+inline SphDivM0 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm0h=a *2 rm0=a } }
+inline SphDivM1 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm1h=a *2 rm1=a } }
+inline SphDivBL { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hbh=a *2 rb=a } }
+
+// X = 0 all the time (the "off" value), Y = band
+inline sph_kernel {
+    x=[SPH_TOP] { wsync x-- }!=
+    y=0
+    {
+        a=sp_bx0,y c+ wsync em1=x SphDivP0          // r0: P0 (preamble: M1 dot off)
+        a=sp_bx1,y c+ wsync eb=x  SphDivP1          // r1: P1 (preamble: BL dot off)
+        a=sp_bx2,y c+ wsync       SphDivM0          // r2: M0
+        a=sp_bx3,y c+ wsync       SphDivM1          // r3: M1
+        a=sp_bx4,y c+ wsync       SphDivBL          // r4: BL
+        wsync hmove=a                               // r5: fine positions + band colours
+        a=(sp_colp),y cp0=a cpf=a                   //  front objects: bright
+        a=y c- a+16 y=a a=(sp_colp),y cp1=a         //  back objects (P1/M1): dim
+        a=y c+ a-16 y=a
+        wsync a=sp_bx0,y !={ a=3 } gp0=a            // r6: P0 dot on  (GRP %11, ENAxx bit 1)
+        wsync a=sp_bx1,y !={ a=3 } gp1=a            // r7: P1 on
+        wsync gp0=x a=sp_bx2,y !={ a=3 } em0=a      // r8: P0 off, M0 on
+        wsync gp1=x a=sp_bx3,y !={ a=3 } em1=a      // r9: P1 off, M1 on
+        wsync em0=x a=sp_bx4,y !={ a=3 } eb=a       // r10: M0 off, BL on
+        sp_bx0,y=x sp_bx1,y=x sp_bx2,y=x sp_bx3,y=x sp_bx4,y=x  // band drawn: clear it for the next frame
+        y++ y?[SPH_NB] =={ goto sph_kernel_done }
+    } always
+    sph_kernel_done:
+    wsync em1=x eb=x
+}
+
+
+// ---------------------------------------------------------------------------
+//  Effect entry point
+// ---------------------------------------------------------------------------
+func sphere {
+    ctpf=a=0x10 cbg=a=0 cpf=a pf0=pf1=pf2=a gp0=gp1=a em0=em1=a eb=a  // ball 2 px, no PF
+    rep0=rep1=a vdp0=vdp1=a vdb=a
+    ns0=ns1=a=0x10                              // missiles 2 px, players 1 copy
+    a=0 x=[0x4F] { sp_bx,x=a x-- }>=0           // clear 80-CF
+    sp_pv0=a sp_pv1=a sp_i=a
+    FxStart
+    goto sphere_enter                           // called from overscan: start at vblank
+    {
+        sync1                                   // --- overscan ---
+            far song_player
+            BreakOnSeq
+            FxUpdate
+            sp_tmin=a=[SPH_TMIN_BLANK]           // continue the next frame's points
+            sph_points
+        sphere_enter:
+        sync2                                   // --- vblank ---
+            FxFadeLevel a<< a<< a<< a<< a<< c- a+&<SphCol sp_colp=a     // level * 32
+            a=&>SphCol sp_colp+1=a
+            sp_tmin=a=[SPH_TMIN_BLANK]           // ...and finish them (last thing before the
+            sph_points                          //  picture: the time check covers everything)
+        sync3                                   // --- picture ---
+            x=0
+            sph_kernel
+            // below the sphere: ~34 idle lines before the picture timer ends -> start the next
+            // frame (the kernel has already read and cleared every band)
+            sph_music
+            sp_i=a=0 sp_tmin=a=[SPH_TMIN_PIC]
+            sph_points
+    } always
+}
