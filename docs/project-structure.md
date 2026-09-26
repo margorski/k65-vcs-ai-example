@@ -48,8 +48,8 @@ main {
     {
         // rainbow            // effect in the same bank: plain call (currently disabled)
         // far plasma         // effect in another bank: far call (currently disabled)
-        far eqsine
         far sphere
+        far eqsine
     } always
 }
 ```

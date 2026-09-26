@@ -39,7 +39,7 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
    przód – P0/M0/ball w jasnym), co podkreśla trójwymiarowość. Stopa – zryw prędkości obrotu,
    hi-hat – kula pulsuje (do 120%).
 
-**Obecnie włączone są efekty 3 i 4 (EQ Sine, potem kula)** – tęcza i plazma są zakomentowane w `main.k65`
+**Obecnie włączone są efekty 4 i 3 (najpierw kula/bryły, potem EQ Sine)** – tęcza i plazma są zakomentowane w `main.k65`
 (kod zostaje; żeby je włączyć, wystarczy odkomentować linie).
 
 **Sterowanie:** FIRE (joystick 0) lub SELECT – płynne wygaszenie i przejście do następnego efektu.

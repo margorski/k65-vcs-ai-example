@@ -45,6 +45,8 @@ var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[m
 var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid
 var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
+var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
+var sp_gr    = 0xEB;        // explosion level 0..4 (scale 2^level, points off-screen are dropped)
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
 // (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple.
@@ -73,6 +75,16 @@ data SphTrans {
     for x=0..24 eval [ x==0 ? 0 : (x > 12 ? min(5, floor((25-x)/2)) : min(5, floor(x/2))) ]
 }
 
+// Explosion curve: 24..13 blow up (x2 per 2 frames, x16 = gone), 12 = switch,
+// 12..1 the new shape flies in from outside (x16 -> x1)
+data SphTransG {
+    for x=0..24 eval [ x==0 ? 0 : (x > 12 ? min(4, floor((25-x)/2)) : min(4, floor(x/3))) ]
+}
+
+// Transition used when entering a mood: calm parts implode, energetic ones explode
+//                  CALM   FULL   BREAK  BUILD
+data SphModeTrans { 0      1      0      1 }
+
 // Song mood per sequence position (copy of EqSongMode from eqsine.k65 - that one lives in
 // bank3 and can't be read from here): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
 data SphSongMode {
@@ -94,11 +106,21 @@ inline sph_shrink {
     }
 }
 
+// Explosion: A = signed offset doubled sp_gr times. After every doubling the point must still
+// be inside the dot area (x -72..71 -> pixels 8..151, y -82..82 -> lines 0..164), otherwise
+// it flew off-screen and is dropped (goto .skip) - an out-of-range point would index past
+// the band tables. Doubling a value in range can only wrap to a value that fails the test.
+// (Written out inside sph_place: a local label is only visible within one inline.)
+
 // Scale + place one point: tmp3 = x byte (offset+64, bit 7 = far side), tmp4 = y byte.
 // Picks the band and the nearest free object slot, stores the positioning value.
 inline sph_place {
-    a=tmp3 a&0x7F y=a a=(ptrD),y sph_shrink c- a+[SPH_CX] tmp1=a  // screen x
-    y=tmp4 a=(ptrD),y sph_shrink c- a+[SPH_CY] y=a            // line in the dot area
+    a=tmp3 a&0x7F y=a a=(ptrD),y sph_shrink
+    x=sp_gr !={ { a<< tmp2=a c- a+[72] a?144 >={ goto .skip } a=tmp2 x-- }!= }   // explosion
+    c- a+[SPH_CX] tmp1=a                                      // screen x
+    y=tmp4 a=(ptrD),y sph_shrink
+    x=sp_gr !={ { a<< tmp2=a c- a+[82] a?165 >={ goto .skip } a=tmp2 x-- }!= }
+    c- a+[SPH_CY] y=a                                         // line in the dot area
     a=SphLineBand,y tmp2=a                                    // band
     a=tmp3 <0{                                                // candidate list: back points
         a=SphLineCand,y c- a+[SPH_BACKROWS] x=a               //  prefer P1/M1 (dim colour),
@@ -114,6 +136,7 @@ inline sph_place {
         }
         x++
     } always
+    .skip:
 }
 
 // Sphere: every point is stored in the frame (2 bytes). sp_i = byte index.

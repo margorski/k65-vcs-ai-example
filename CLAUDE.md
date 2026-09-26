@@ -20,7 +20,7 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   split between the idle lines BELOW the sphere (next frame), overscan and vblank (adaptive: stops when the RIOT timer runs low, next phase continues) - measure
   the slack (see docs/project-structure.md) after any change there.
   File order in files.lst matters: sphere_defs -> sphere_data -> sphere (far call to a later function crashes K65).
-Enabled in main.k65: eqsine -> sphere.
+Enabled in main.k65: sphere -> eqsine.
 
 ## Knowledge base - read before editing K65 code
 

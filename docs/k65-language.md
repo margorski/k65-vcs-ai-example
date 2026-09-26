@@ -58,6 +58,9 @@ data   name { ... }        // bytes (see 5)
   `goto main` crashes the compiler - put a label (`.full_reset:`) at the top of main and jump to it.
   Jumping into the middle of a loop is fine: `goto fx_enter  { ... fx_enter: ... } always`
   (use a global label if a `far` call sits between the goto and the label).
+- Local labels (`.name`) are scoped to one inline expansion: a `goto .x` in one inline cannot
+  reach `.x` defined in another inline (`Unknown label '__localN_x'`), even if one is nested in
+  the other - keep the jump and the label in the same inline.
 - A `var` above `0xFF` (e.g. `0x19E`, RAM mirror) is always addressed as absolute (+1 cycle) -
   handy for exact cycle padding.
 - Sections are only linked if referenced (dead code is dropped). `-keep name` in files.lst forces it.
