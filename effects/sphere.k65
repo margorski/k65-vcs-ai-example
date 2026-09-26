@@ -85,15 +85,16 @@ inline sph_points {
     a>> c- a+&>SphScaleA ptrD+1=a
     a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
     a=sp_shape !={
-        a?1 =={ far shape_proc2 }                   // cube: vertex shape in bank2
-        else { far shape_procC }                    // pyramid: vertex shape in bank core
+        a?2 <{ far shape_proc2 }                    // cube: vertex shape in bank2
+        else { a?2 =={ far shape_procC }            // pyramid: bank core
+               else { far shape_proc7 } }           // diamond: bank7
     } else {
-        // sphere: bank + frame in bank
-        x=0 a=sp_frame
-        { a?[SPH_FPB] < break c+ a-[SPH_FPB] x++ } always
+        // sphere: 88 frames in banks 5-6 -> bank + frame in bank
+        x=sp_frame a=SphFrameMap,x
+        x=0 a?[SPH_FPB] >={ c+ a-[SPH_FPB] x++ }
         y=a a>> a>> c- a+&>SphAnimA ptrC+1=a        // + frame/4 pages
         a=y a>>> a>>> a>>> a&0xC0 ptrC=a            // (frame&3)*64 - frames are 64 bytes (padded)
-        x?1 <{ far sph_proc5 } else { x?1 =={ far sph_proc6 } else { far sph_proc7 } }
+        x?1 <{ far sph_proc5 } else { far sph_proc6 }
     }
 }
 

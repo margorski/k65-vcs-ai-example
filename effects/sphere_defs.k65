@@ -8,7 +8,7 @@
 bank bank4;
 
 [ SPH_NPTS = 30 ]           // points (must match tools/gen_sphere.py)
-[ SPH_FRAMES = 132, SPH_FPB = 44 ]
+[ SPH_FRAMES = 132, SPH_FPB = 44 ]   // shapes: 132 frames; sphere: 88 (2 banks x 44), frame*2/3
 [ SPH_NB = 15, SPH_TOP = 30 ]   // bands, blank lines above the dot area
 [ SPH_CX = 80, SPH_CY = 82 ]    // centre: pixel / line within the dot area
 [ SPH_SPEED = 0x40 ]        // speed at effect start (1/256 animation frames per video frame),
@@ -42,7 +42,7 @@ var sp_pv1   = 0xD6;
 var sp_tmin  = 0xD7;        // point routine: stop when INTIM < sp_tmin
 var sp_colp[2] = 0xD8;      // pointer to the band colours of the current fade level
 var sp_speed = 0xDA;        // current base speed (glides towards SphModeSpeed[mood])
-var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid
+var sp_shape = 0xDB;        // shape of the current frame: 0 sphere, 1 cube, 2 pyramid, 3 diamond
 var sp_sh    = 0xE8;        // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
 var sp_tt    = 0xE9;        // shape transition timer 24 -> 0 (shape switches at 12)
 var sp_ttype = 0xEA;        // transition: 0 implosion, 1 explosion
@@ -65,9 +65,12 @@ data SphCol {
 data SphModeSpeed { 0x40   0x80   0x50   0xC0 }
 
 // Shape per song mood:      CALM    FULL    BREAK   BUILD
-data SphModeShape {         1       2       0       0 }     // 0 sphere, 1 cube, 2 pyramid
-                            // target: CALM cube, FULL pyramid, BREAK diamond, BUILD sphere
-                            // (BREAK shows the sphere until the diamond exists)
+data SphModeShape {         1       2       3       0 }     // 0 sphere, 1 cube, 2 pyramid, 3 diamond
+
+// Sphere frame (0..87, two banks) for the common animation frame 0..131 (same angle)
+data SphFrameMap {
+    for x=0..131 eval [ floor(x*2/3) ]
+}
 
 // Implosion curve over the transition timer (index 0..24, counts down):
 // 24..13 collapse (level 0 -> 5, 2 frames per level), 12 = shape switch, 12..1 grow back

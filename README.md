@@ -38,6 +38,11 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
    w każdym 5 kropek). Punkty z tyłu kuli są ciemniejsze (rysują je P1/M1 w przyciemnionym kolorze,
    przód – P0/M0/ball w jasnym), co podkreśla trójwymiarowość. Stopa – zryw prędkości obrotu,
    hi-hat – kula pulsuje (do 120%).
+   Kształt, kolor i prędkość zależą od nastroju sekcji utworu: spokojne części – niebieski
+   sześcian (wolno), główne – zielona piramida, breakdowny – czerwony diament, build-upy –
+   fioletowa kula (najszybciej). Zmiana kształtu: implozja (wejście w spokojną sekcję) albo
+   eksplozja (wejście w energiczną). Bryły trzymają w ROM tylko obrócone wierzchołki; punkty
+   na krawędziach VCS liczy sam jako średnie wierzchołków.
 
 **Obecnie włączone są efekty 4 i 3 (najpierw kula/bryły, potem EQ Sine)** – tęcza i plazma są zakomentowane w `main.k65`
 (kod zostaje; żeby je włączyć, wystarczy odkomentować linie).

@@ -20,6 +20,10 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   split between the idle lines BELOW the sphere (next frame), overscan and vblank (adaptive: stops when the RIOT timer runs low, next phase continues) - measure
   the slack (see docs/project-structure.md) after any change there.
   File order in files.lst matters: sphere_defs -> sphere_data -> sphere (far call to a later function crashes K65).
+  Shapes per mood (SphModeShape): calm cube (bank2), full pyramid (core), breakdown diamond (bank7), build-up
+  sphere (banks 5-6, 88 frames mapped from 132); vertex shapes store only vertices, points = vertex pairs
+  (midpoints / quarter points). Transitions: implosion (into calm moods) / explosion (into energetic ones).
+  ROM is nearly full: ~600 B left in core/bank2/bank7, ~70 B in banks 5-6, ~1.6 KB in bank4.
 Enabled in main.k65: sphere -> eqsine.
 
 ## Knowledge base - read before editing K65 code
