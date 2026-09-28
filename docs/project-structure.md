@@ -95,7 +95,8 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` shapes (5 x 15 band positions + animation/music state);
   live pyramid/diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` +
   `0xD8-0xD9`, rotation scratch above the picture `0xF4-0xF5`, `0xE6-0xE7`, `0xCF`, `0xD7`, `0xDD`,
-  `0xDF` (mus_f0/f1: the shapes do not read them); F6-F7 = stack during `call shape_mul` (10 deep)
+  `0xDF` (mus_f0/f1: the shapes do not read them); F6-F7 = stack during `call shape_mul` (10 deep);
+  `0xDD` = shape_hue from the end of the rotation until the end of the kernel
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)

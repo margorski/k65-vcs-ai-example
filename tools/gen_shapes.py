@@ -28,7 +28,7 @@ import os
 import sys
 
 NPTS = 30                   # points on the sphere (must match SPHERE_NPTS)
-FRAME_BYTES = 32            # bytes per stored sphere frame - MUST stay 32 (sphere_frame: frame*32)
+FRAME_BYTES = 30            # bytes per stored sphere frame - MUST stay 30 (sphere_frame: frame*30)
 FRAMES = 132                # animation frames per turn - must match SHAPE_FRAMES
 SPH_FRAMES_N = FRAMES // 2  # stored sphere frames (the second half turn = far bits flipped)
 SPH_BANK = "5"
@@ -143,7 +143,9 @@ def frames_of(points, stride, nframes, per_turn=FRAMES):
 
 
 def emit_tables(bank, scale, line_band, cbase, coff, line_cand):
-    """placement tables (shape_place) at their fixed addresses, label suffix = bank"""
+    """placement tables (shape_place) at their fixed addresses, label suffix = bank.
+    (ShapeLineBand + ShapeLineCand merged into one byte would save 165 B per copy, but the unpacking
+    costs ~8 cycles per point: the diamond then misses a dot in ~3x more frames - not worth it.)"""
     return "\n".join([
         f"data ShapeScale{bank} {{\n    address 0x{ADDR_SCALE:04X}\n{rows(scale)}\n}}",
         f"data ShapeLineBand{bank} {{\n    address 0x{ADDR_BAND:04X}\n{rows(line_band)}\n}}",
@@ -194,6 +196,8 @@ def main():
             order = sorted(own, key=lambda j: (abs(j - k), j)) + sorted(other, key=lambda j: (abs(j - k), j))
             cbase += [SLOT_BASE[j] for j in order] + [0xFF]
             coff += [SLOT_OFF[j] & 0xFF for j in order] + [0]
+    assert ADDR_BAND + NLINES <= ADDR_CBASE and ADDR_CBASE + len(cbase) <= ADDR_COFF
+    assert ADDR_COFF + len(coff) <= ADDR_CAND and ADDR_CAND + NLINES <= 0xFFC5   # FFC5-: far-call stubs
     tables = (scale, line_band, cbase, coff, line_cand)
 
     sphere = [f"// sphere: {NPTS} points ({len(stored)} stored), {SPH_FRAMES_N} of {FRAMES} frames stored;"

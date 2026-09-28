@@ -34,7 +34,7 @@ bank bank4;
 // engine bank (bank1) and the sphere's bank (bank5), because shape_place runs in both
 var ShapeScaleA = 0xFC00, ShapeLineBand = 0xFE00;
 var ShapeCandBase = 0xFEA8, ShapeCandOff = 0xFEE4, ShapeLineCand = 0xFF20;
-[ SHAPE_BACKROWS = 30 ]     // back points use candidate rows 5-9 (5 rows x 6)
+[ SHAPE_BACKROWS = 30 ]         // back points use candidate rows 5-9 (5 rows x 6)
 
 // RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
 var shape_bx = 0x80;
@@ -71,21 +71,24 @@ var shape_sy = 0xF4, shape_cy = 0xF5, shape_cyg = 0xDD, shape_t = 0xDF;
 var shape_zp0 = 0x00, shape_zp1 = 0x01; // base for zero page indexed reads (a=shape_zp0,x = RAM at x)
 var shape_zp80 = 0x80, shape_zp81 = 0x81; //  ... and for x = RAM - 0x80 (ShapeZp: bit 7 = negate flag)
 
-// Band colours (top -> bottom: light from above). One 256-byte page per song mood
-// (section mode): CALM blue, FULL green, BREAK red, BUILD purple,
-// + logo pages without the far-side darkening (flat logos): 4 grey (Altair), 5 red (Atari).
-// Luminance never below 2 (grey 0 would be black = invisible).
-// Inside a page: 8 fade levels x 32 = [0..15] front (bright, P0/M0/BL),
-// [16..31] back (6 luminance steps darker, P1/M1).
-data ShapeCol {
-    address 0xF400          // fixed (F400-F9FF): keeps FA00-FBFF + the end of bank4 free for the
-                            //  far-call stubs, which must sit at the same address as in the data banks
-    for x=0..1535 eval [ mood = floor(x/256), lvl = floor((x%256)/32), b = x%16,
-        back = mood > 3 ? 0 : floor(x/16)%2,
-        hue = mood==0 ? 0xB0 : (mood==1 ? 0x50 : (mood==2 ? 0x60 : (mood==3 ? 0xA0 : (mood==4 ? 0x00 : 0x60)))),
+// Band colours (top -> bottom: light from above) = hue | luminance. The luminance pattern is the
+// same for every mood, so it is stored once: 2 pages - 0 = 3D shapes (back points 6 steps darker),
+// 1 = flat logos (no far-side darkening). Inside a page: 8 fade levels x 32 = [0..15] front
+// (bright, P0/M0/BL), [16..31] back (P1/M1). Luminance never below 2 (grey 0 would be black =
+// invisible); fade level 0 = 0 (with hue 0 = black). The kernel ORs the hue in (shape_hue).
+data ShapeLum {
+    address 0xF400          // fixed + page aligned: (shape_colp),y stays in the page; FA00-FBFF + the
+                            //  end of bank4 stay free for the far-call stubs
+    for x=0..511 eval [ flat = floor(x/256), lvl = floor((x%256)/32), b = x%16,
+        back = flat ? 0 : floor(x/16)%2,
         lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
-        lvl==0 ? 0 : (lum < 2 ? hue + 2 : hue + (lum & 14)) ]
+        lvl==0 ? 0 : (lum < 2 ? 2 : (lum & 14)) ]
 }
+// Colour page (shape_page): song mood CALM blue, FULL green, BREAK red, BUILD purple, then the
+// logos: 4 grey (Altair), 5 red (Atari); pages 4-5 use the flat luminance page
+data ShapeHue { 0xB0 0x50 0x60 0xA0 0x00 0x60 }
+var shape_hue = 0xDD;           // hue of the frame: set after the rotation (which uses DD as
+                                //  shape_cyg), read by the kernel
 
 // Base rotation speed per song mood (1/256 animation frames per video frame; 132 frames = 1 turn)
 //                    CALM   FULL   BREAK  BUILD
@@ -110,11 +113,11 @@ data ShapeExplode {
 //                    CALM   FULL   BREAK  BUILD
 data ShapeModeTrans { 0      1      0      1 }
 
-// Song mood per sequence position (the same table as EqSongMode in eqsine.k65, from
-// tools/song_analysis.py): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
+// Song mood per 4 sequence positions (every mood change of the song lands on a multiple of 4;
+// the same moods as EqSongMode in eqsine.k65, from tools/song_analysis.py; the song wraps at 102):
+// 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
 data ShapeSongMode {
-    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2
-    3 3 3 3 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2
-    2 2 2 2 0 0 0 0 3 3 3 3 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0
-    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+    0 0 0 0 1 1 2 2 3 1 1 0 0 1 1 2 2 0 3 1 1 1 1 0 0 0
 }
+// A = mood of the song position, X = songpos_seq
+inline shape_mood { a=songpos_seq a>> a>> x=a a=ShapeSongMode,x x=songpos_seq }

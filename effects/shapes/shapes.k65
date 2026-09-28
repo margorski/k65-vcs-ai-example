@@ -64,7 +64,7 @@ inline shape_music {
 
     // base speed glides (1/256 per frame) towards the speed of the current song mood
     // shape: when the mood asks for another shape, implode, switch while collapsed, grow back
-    x=songpos_seq y=ShapeSongMode,x
+    shape_mood y=a
     shape_target tmp1=a                                     // shape wanted now
     a=shape_tt !={
         shape_tt--
@@ -87,6 +87,12 @@ inline shape_music {
     a=shape_frame a+tmp2
     a?[SHAPE_FRAMES] >={ c+ a-[SHAPE_FRAMES] }
     shape_frame=a
+}
+
+// colour page of the song position -> A: the mood 0..3, the logos 4 (Altair) / 5 (Atari)
+inline shape_page {
+    shape_mood x?[LOGO_SEQ] >={ a=[LOGO_PAGE] }
+    x?[ALTAIR_SEQ_END] <{ a=[ALTAIR_PAGE] }
 }
 
 // first point index of the frame per shape: the live shapes share one point list (bank1)
@@ -129,8 +135,8 @@ inline shape_kernel {
         a=shape_bx3,y c+ wsync       ShapeDivM1     // r3: M1
         a=shape_bx4,y c+ wsync       ShapeDivBL     // r4: BL
         wsync hmove=a                               // r5: fine positions + band colours
-        a=(shape_colp),y cp0=a cpf=a                //  front objects: bright
-        a=y c- a+16 y=a a=(shape_colp),y cp1=a      //  back objects (P1/M1): dim
+        a=(shape_colp),y a|shape_hue cp0=a cpf=a    //  front objects: bright
+        a=y c- a+16 y=a a=(shape_colp),y a|shape_hue cp1=a  //  back objects (P1/M1): dim
         a=y c+ a-16 y=a
         wsync a=shape_bx0,y !={ a=3 } gp0=a         // r6: P0 dot on  (GRP %11, ENAxx bit 1)
         wsync a=shape_bx1,y !={ a=3 } gp1=a         // r7: P1 on
@@ -156,7 +162,7 @@ func shapes {
     shape_pv0=a shape_pv1=a shape_i=a
     shape_speed=a=[SHAPE_SPEED]
     a=0 shape_tt=a shape_imp=a shape_exp=a shape_ttype=a
-    x=songpos_seq y=ShapeSongMode,x shape_target shape_cur=a    // start with the current shape
+    shape_mood y=a shape_target shape_cur=a    // start with the current shape
     x=a a=ShapeI0,x shape_i=a
     a=64 shape_v0x=a shape_v0y=a shape_v1x=a shape_v1y=a shape_v2x=a shape_v2y=a
                                                 // live shapes: valid vertices (centre)
@@ -177,10 +183,8 @@ func shapes {
             FxFadeLevel                         // band colours: after the points, which use
                                                 //  shape_colp as scratch (v5 of the live shapes)
             x=shape_cur x?[SHAPE_ATARI] >={ logo_backdim }                  // logo back: darker
-            a<< a<< a<< a<< a<< shape_colp=a                                // level * 32 (page aligned)
-            x=songpos_seq a=ShapeSongMode,x x?[LOGO_SEQ] >={ a=[LOGO_PAGE] }
-            x?[ALTAIR_SEQ_END] <{ a=[ALTAIR_PAGE] }                         // Altair: grey
-            c- a+&>ShapeCol shape_colp+1=a      // page = song mood (logo: Atari red)
+            a<< a<< a<< a<< a<< shape_colp=a    // luminance: level * 32 (page aligned)
+            shape_page a?4 a=&>ShapeLum a+0 shape_colp+1=a  // + 1 page for the flat logos (carry)
         sync3                                   // --- picture ---
             // the SHAPE_TOP blank lines above the dots: the next frame's music + animation step
             // (+ the live shapes' rotation), timed by the RIOT timer instead of counted lines
@@ -189,6 +193,8 @@ func shapes {
             a=shape_cur a?[SHAPE_DIAMOND] =={ far diamond_setup }          // live shapes: rotate
             else { a?[SHAPE_PYRAMID] =={ far pyramid_setup }               //  the vertices (bank2)
                    else { a?[SHAPE_CUBE] =={ far cube_setup } } }
+            shape_page x=a a=ShapeHue,x x=fx_fade x?4 <{ a=0 }             // hue (fade level 0: black)
+            shape_hue=a
             timwait wsync                       // = line SHAPE_TOP
             TIM64T=a=[SHAPE_BOT_TIM]            // re-armed for the rest of the picture: same end line,
             x=0                                 //  64-cycle units for the point phase below (armed

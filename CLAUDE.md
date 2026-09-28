@@ -41,6 +41,8 @@ the linker drops unreferenced sections, so they take no ROM):
   implosion/explosion code outside transitions. Only the placement tables (ShapeScale, ShapeLineBand, ShapeCand*,
   ShapeLineCand) exist twice - bank1 + bank5 at the same fixed addresses FC00-FFC4 (shape_place is shared).
   Transitions: implosion (into calm moods) / explosion (into energetic ones).
+  Colours: ShapeLum (2 luminance pages: 3D / flat logos, x 8 fade levels) | shape_hue (per song mood /
+  logo, set above the picture into 0xDD, ORed in by the kernel). ShapeSongMode has one entry per 4 sequences.
   Logos (bank1): flat, spun around Y at runtime (x = x0*cos via quarter squares), fed through shape_place.
   Banks: core = main + music, bank1 dot engine of the live shapes + logos, bank2 rotation of the live shapes
   (+ plasma if re-enabled - check space), bank4 shapes kernel, bank5 sphere;
