@@ -1,0 +1,202 @@
+// ============================================================================
+//  Shapes - tumbling 3D point objects: the effect (frame loop, music, kernel).
+//
+//  One shape at a time, chosen by the song mood (calm = cube, full = pyramid, breakdown =
+//  diamond, build-up = sphere; first verse = Altair logo, from sequence 44 = Atari logo).
+//  Every shape has its own file (sphere.k65, cube.k65, pyramid.k65, diamond.k65, logo.k65);
+//  shared code: shape_defs (constants, RAM, colours), shape_math (rotation math), shape_place
+//  (point -> band slot), shape_live (point routine of the live shapes), this file.
+//  The sphere's rotation is precomputed (bank5); cube, pyramid and diamond are rotated live
+//  every frame (bank2: *_setup) and their points are made from the rotated vertices by ONE
+//  data-driven routine (bank1: shape_live_points); the logos spin at runtime (bank1).
+//
+//  Kernel: 15 bands of 11 lines. In every band all five objects are
+//  re-positioned (P0 P1 M0 M1 BL, one line each), one HMOVE line applies the
+//  fine positions and each object then draws one 2x2 px dot on its own line:
+//      r0-r4 position, r5 HMOVE + colour, dots: P0 r6, P1 r7, M0 r8, M1 r9, BL r10
+//  -> up to 75 dots, 5 per band. An empty slot (x = 0) simply isn't switched on.
+//  A point goes to the slot whose dot line is nearest to its y (next nearest if
+//  taken, dropped if the band is full).
+//
+//  A shape change into a calm part implodes the object to the centre, switches while
+//  collapsed and grows it back; into an energetic part it explodes (points fly off-screen),
+//  switches, and the new shape flies in from outside. Both ~0.5 s.
+//
+//  Colour and base rotation speed follow the song mood:
+//  calm = blue/slow, breakdown = red/slow, full = green/faster, build-up = purple/fastest
+//  (the speed glides to the new value in ~1-2 s).
+//
+//  Depth: points on the far side go to P1/M1 (dim band colour), near ones to
+//  P0/M0/BL (bright) - bit 7 of the point's x byte.
+//
+//  Music: kick (AUDC 15 attack on ch0) -> the rotation surges (up to ~2.3x,
+//  fades in ~16 frames); hat (AUDC 8 attack, ch0 or ch1) -> the shape pulses
+//  bigger (4 scale steps up to 120%, ~0.3 s).
+// ============================================================================
+
+bank bank4;
+
+// ---------------------------------------------------------------------------
+//  Per frame
+// ---------------------------------------------------------------------------
+
+// Shape for the current song position: x = songpos_seq, y = mood -> A
+//   first verse: Altair logo, from the 2nd calm part on: Atari logo, otherwise the mood's shape
+inline shape_target {
+    a=ShapeModeShape,y
+    x?[LOGO_SEQ] >={ a=[SHAPE_ATARI] }
+    x?[ALTAIR_SEQ_END] <{ a=[SHAPE_ALTAIR] }
+}
+
+// kick -> speed boost, hat -> pulse; advance the animation
+inline shape_music {
+    // attack = volume rises by >= 4 (kick) / >= 2 (hats are quiet, e.g. in the intro)
+    a=mus_v0 a&15 y=a c+ a-shape_pv0 shape_pv0=y
+    >={ tmp1=a
+        a=mus_c0 a&15 a?15 =={ a=tmp1 a?4 >={ shape_boost=a=32 } }      // kick: speed surge
+        else { a?8 =={ a=tmp1 a?2 >={ shape_pulse=a=15 } } }            // hat: pulse
+    }
+    a=mus_v1 a&15 y=a c+ a-shape_pv1 shape_pv1=y
+    >={ tmp1=a a=mus_c1 a&15 a?8 =={ a=tmp1 a?2 >={ shape_pulse=a=15 } } }
+
+    a=shape_pulse !={ shape_pulse-- }
+    a=shape_boost !={ c+ a-2 <{ a=0 } shape_boost=a }  // surge fades in ~16 frames
+
+    // base speed glides (1/256 per frame) towards the speed of the current song mood
+    // shape: when the mood asks for another shape, implode, switch while collapsed, grow back
+    x=songpos_seq y=ShapeSongMode,x
+    shape_target tmp1=a                                     // shape wanted now
+    a=shape_tt !={
+        shape_tt--
+        a=shape_tt a?12 =={ a=tmp1 shape_cur=a }            // collapsed / blown away: switch
+    } else {
+        a=tmp1 a?shape_cur !={                              // new shape wanted: start the
+            shape_tt=a=24 a=ShapeModeTrans,y shape_ttype=a  //  mood's transition
+        }
+    }
+    x=shape_tt
+    a=shape_ttype !={ a=ShapeExplode,x shape_exp=a a=0 shape_imp=a }    // explosion
+    else { a=ShapeImplode,x shape_imp=a a=0 shape_exp=a }               // implosion
+    a=ShapeModeSpeed,y
+    a?shape_speed !={ <{ shape_speed-- } else { shape_speed++ } }
+
+    // position += base speed + boost*4 (8.8 fixed point, wraps at SHAPE_FRAMES)
+    a=shape_boost a<< a<< c- a+shape_speed tmp1=a
+    a=0 a+0 tmp2=a                                  // carry -> +1 frame
+    a=shape_frac c- a+tmp1 shape_frac=a
+    a=shape_frame a+tmp2
+    a?[SHAPE_FRAMES] >={ c+ a-[SHAPE_FRAMES] }
+    shape_frame=a
+}
+
+// first point index of the frame per shape: the live shapes share one point list (bank1)
+data ShapeI0 { 0 [CUBE_I0] [PYRAMID_I0] [DIAMOND_I0] 0 0 }
+
+// next points of the frame (from shape_i, while time is left) -> band slots
+inline shape_points {
+    a=shape_tt !={ a=shape_tmin c- a+[SHAPE_TMIN_TRANS] shape_tmin=a }   // transitions: slower points
+    a=shape_pulse a>> a>> tmp1=a                    // scale level 0..3
+    a>> c- a+&>ShapeScaleA ptrD+1=a
+    a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
+    a=shape_cur !={
+        a?[SHAPE_ATARI] <{ far shape_live_points }  // cube, pyramid, diamond (bank1)
+        else { far logo_points }                    // logos (bank1)
+    } else {
+        sphere_frame                                // sphere (bank5)
+        far sphere_points
+    }
+}
+
+
+// ---------------------------------------------------------------------------
+//  Kernel
+// ---------------------------------------------------------------------------
+
+// fine/coarse positioning after the line's preamble: A = x input
+inline ShapeDivP0 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hp0h=a *2 rp0=a } }
+inline ShapeDivP1 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hp1h=a *2 rp1=a } }
+inline ShapeDivM0 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm0h=a *2 rm0=a } }
+inline ShapeDivM1 { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hm1h=a *2 rm1=a } }
+inline ShapeDivBL { nocross { { a-15 }>= a^7 a<< a<< a<< a<< hbh=a *2 rb=a } }
+
+// X = 0 all the time (the "off" value), Y = band. Starts on the first band line (SHAPE_TOP).
+inline shape_kernel {
+    y=0
+    {
+        a=shape_bx0,y c+ wsync em1=x ShapeDivP0     // r0: P0 (preamble: M1 dot off)
+        a=shape_bx1,y c+ wsync eb=x  ShapeDivP1     // r1: P1 (preamble: BL dot off)
+        a=shape_bx2,y c+ wsync       ShapeDivM0     // r2: M0
+        a=shape_bx3,y c+ wsync       ShapeDivM1     // r3: M1
+        a=shape_bx4,y c+ wsync       ShapeDivBL     // r4: BL
+        wsync hmove=a                               // r5: fine positions + band colours
+        a=(shape_colp),y cp0=a cpf=a                //  front objects: bright
+        a=y c- a+16 y=a a=(shape_colp),y cp1=a      //  back objects (P1/M1): dim
+        a=y c+ a-16 y=a
+        wsync a=shape_bx0,y !={ a=3 } gp0=a         // r6: P0 dot on  (GRP %11, ENAxx bit 1)
+        wsync a=shape_bx1,y !={ a=3 } gp1=a         // r7: P1 on
+        wsync gp0=x a=shape_bx2,y !={ a=3 } em0=a   // r8: P0 off, M0 on
+        wsync gp1=x a=shape_bx3,y !={ a=3 } em1=a   // r9: P1 off, M1 on
+        wsync em0=x a=shape_bx4,y !={ a=3 } eb=a    // r10: M0 off, BL on
+        shape_bx0,y=x shape_bx1,y=x shape_bx2,y=x shape_bx3,y=x shape_bx4,y=x  // band drawn: clear it
+        y++ y?[SHAPE_NB] =={ goto shape_kernel_done }
+    } always
+    shape_kernel_done:
+    wsync em1=x eb=x
+}
+
+
+// ---------------------------------------------------------------------------
+//  Effect entry point
+// ---------------------------------------------------------------------------
+func shapes {
+    ctpf=a=0x10 cbg=a=0 cpf=a pf0=pf1=pf2=a gp0=gp1=a em0=em1=a eb=a  // ball 2 px, no PF
+    rep0=rep1=a vdp0=vdp1=a vdb=a
+    ns0=ns1=a=0x10                              // missiles 2 px, players 1 copy
+    a=0 x=[0x4F] { shape_bx,x=a x-- }>=0        // clear 80-CF
+    shape_pv0=a shape_pv1=a shape_i=a
+    shape_speed=a=[SHAPE_SPEED]
+    a=0 shape_tt=a shape_imp=a shape_exp=a shape_ttype=a
+    x=songpos_seq y=ShapeSongMode,x shape_target shape_cur=a    // start with the current shape
+    x=a a=ShapeI0,x shape_i=a
+    a=64 shape_v0x=a shape_v0y=a shape_v1x=a shape_v1y=a shape_v2x=a shape_v2y=a
+                                                // live shapes: valid vertices (centre)
+                                                //  until the first rotation above the picture
+    FxStart
+    goto shapes_enter                           // called from overscan: start at vblank
+    {
+        sync1                                   // --- overscan ---
+            far song_player
+            BreakOnSeq
+            FxUpdate
+            shape_tmin=a=[SHAPE_TMIN_BLANK]     // continue the next frame's points
+            shape_points
+        shapes_enter:
+        sync2                                   // --- vblank ---
+            shape_tmin=a=[SHAPE_TMIN_BLANK]     // ...finish the points (the time check leaves
+            shape_points                        //  >= 449 cycles: enough for the colours below)
+            FxFadeLevel                         // band colours: after the points, which use
+                                                //  shape_colp as scratch (v5 of the live shapes)
+            x=shape_cur x?[SHAPE_ATARI] >={ logo_backdim }                  // logo back: darker
+            a<< a<< a<< a<< a<< shape_colp=a                                // level * 32 (page aligned)
+            x=songpos_seq a=ShapeSongMode,x x?[LOGO_SEQ] >={ a=[LOGO_PAGE] }
+            x?[ALTAIR_SEQ_END] <{ a=[ALTAIR_PAGE] }                         // Altair: grey
+            c- a+&>ShapeCol shape_colp+1=a      // page = song mood (logo: Atari red)
+        sync3                                   // --- picture ---
+            // the SHAPE_TOP blank lines above the dots: the next frame's music + animation step
+            // (+ the live shapes' rotation), timed by the RIOT timer instead of counted lines
+            TIM64T=a=[SHAPE_TOP_TIM]
+            shape_music
+            a=shape_cur a?[SHAPE_DIAMOND] =={ far diamond_setup }          // live shapes: rotate
+            else { a?[SHAPE_PYRAMID] =={ far pyramid_setup }               //  the vertices (bank2)
+                   else { a?[SHAPE_CUBE] =={ far cube_setup } } }
+            timwait wsync                       // = line SHAPE_TOP
+            TIM64T=a=[SHAPE_BOT_TIM]            // re-armed for the rest of the picture: same end line,
+            x=0                                 //  64-cycle units for the point phase below (armed
+            shape_kernel                        //  here, not after the kernel: a positioning line
+                                                //  can run long during explosions (x at the edge))
+            // below the shape: ~34 idle lines -> the next frame's points (the kernel has
+            // already read and cleared every band)
+            x=shape_cur a=ShapeI0,x shape_i=a shape_tmin=a=[SHAPE_TMIN_BLANK]
+            shape_points
+    } always
+}

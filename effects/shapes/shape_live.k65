@@ -1,0 +1,80 @@
+// ============================================================================
+//  Shapes - the ONE point routine of the live shapes (cube, pyramid, diamond),
+//  dot engine bank (bank1), driven by data (shape_data.k65).
+// ============================================================================
+
+bank bank1;
+
+// tmp3/tmp4 = average of the point (tmp3/tmp4) and the vertex in tmp1/tmp2 (far only if both are)
+inline shape_avg {
+    a=tmp2 c- a+tmp4 a>> tmp4=a
+    a=tmp1 a&tmp3 a&0x80 tmp2=a
+    a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
+}
+
+// ---------------------------------------------------------------------------
+//  Live shapes: ONE point routine for all of them (dot engine bank), driven by data:
+//  - vertex ids (shared by all shapes, ShapeZp -> their RAM): 0..2 = the rotated vertices (E4 EC EE:
+//    T U W / apex +P +Q / A B C), 3..5 = derived per phase by the shape's prep (F4 F6 D8: diamond
+//    -T -U -W, pyramid -P -Q, cube D), 8..11 = ids 0..3 negated while fetching (cube -A..-D)
+//  - point list ShapePairA/ShapePairB (all shapes in one table, each ended by 0xFF; shape_i starts at the
+//    shape's first entry, ShapeI0): ShapePairA = vertex A, ShapePairB = B (edge midpoint A-B) / 0x80 lone
+//    vertex / 0x40 quarter point = the PREVIOUS point (the midpoint of the same edge, still in
+//    tmp3/tmp4 - shape_place only reads them) averaged with A once more / 0x20 | B = quarter point
+//    from scratch (midpoint A-B, then averaged with A again).
+//  When a phase starts at a 0x40 quarter point, its midpoint is rebuilt first (tmp3/tmp4 did not
+//  survive the break).
+//  A new live shape = a *_setup (rotation bank) writing vertices 0..2, optionally a prep for 3..5,
+//  and its point list in gen_shapes.py.
+// ---------------------------------------------------------------------------
+// vertex id in Y -> x byte, y byte (bit 7 of the y byte masked: the pyramid and the cube keep
+// far bits of derived vertices there). ShapeZp = the vertex RAM - 0x80, or the RAM itself (bit 7 set,
+// ids 8..11) = negate: x byte as a whole (-(64+x | far) = 64-x | the other side), y byte 128 - y.
+// The flag comes free with the load (no compare). Uses X, keeps Y.
+inline shape_fetch {                                    // -> tmp1, tmp2
+    x=ShapeZp,y <0{ a=shape_zp1,x a&0x7F a^0xFF c- a+129 tmp2=a a=shape_zp0,x a^0xFF c- a+1 }
+    else { a=shape_zp81,x a&0x7F tmp2=a a=shape_zp80,x }
+    tmp1=a
+}
+inline shape_fetch3 {                                   // -> tmp3, tmp4
+    x=ShapeZp,y <0{ a=shape_zp1,x a&0x7F a^0xFF c- a+129 tmp4=a a=shape_zp0,x a^0xFF c- a+1 }
+    else { a=shape_zp81,x a&0x7F tmp4=a a=shape_zp80,x }
+    tmp3=a
+}
+
+inline shape_live_body {
+    x=shape_i a=ShapePairA,x <0{ goto .done }                   // (all points done)
+    a=shape_cur a?2 <{ cube_prep }                              // derived vertices 3..5
+    else { a?2 =={ pyramid_prep } else { diamond_prep } }
+    x=shape_i a=ShapePairB,x a&0x40 =={ goto .loop }
+    x-- y=ShapePairA,x shape_fetch3 x=shape_i x-- y=ShapePairB,x shape_fetch shape_avg // resume: rebuild the midpoint
+    .loop:
+    {
+        a=INTIM a?shape_tmin <{ goto .done }                    // not enough time left here
+        x=shape_i y=ShapePairA,x <0{ goto .done }               // end of the point list
+        a=ShapePairB,x <0{ shape_fetch3 goto .place }           // lone vertex
+        a?0x20 >={ goto .quarter }                              // (quarter points: out of line)
+        shape_fetch3 x=shape_i y=ShapePairB,x shape_fetch       // edge midpoint: A + B
+        .avg:
+        shape_avg
+        .place:
+        shape_place
+        shape_i++
+    } always
+    .quarter:                                                   // A = ShapePairB, Y = vertex A
+    a?0x40 >={ shape_fetch goto .avg }                          // after its midpoint: + A
+    shape_fetch3 x=shape_i a=ShapePairB,x a&0x1F y=a shape_fetch shape_avg // from scratch: midpoint A-B,
+    x=shape_i y=ShapePairA,x shape_fetch goto .avg              //  then with A again
+    .done:
+}
+
+// vertex id -> its RAM - 0x80 (plain) / its RAM (bit 7 set: negated), see shape_fetch
+//               v0      v1      v2      v3      v4      v5    -  -  -v0   -v1   -v2   -v3
+data ShapeZp { 0x64    0x6C    0x6E    0x74    0x76    0x58    0  0  0xE4  0xEC  0xEE  0xF4 }
+
+// the placement tables are read through fixed-address vars (shape_place is shared with the
+// sphere's bank), so reference their labels once or the linker drops them as unused
+func shape_live_points {
+    never { a=ShapeScale1 a=ShapeLineBand1 a=ShapeCandBase1 a=ShapeCandOff1 a=ShapeLineCand1 }
+    shape_live_body
+}

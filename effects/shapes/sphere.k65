@@ -1,0 +1,46 @@
+// ============================================================================
+//  Sphere - 30 points on a sphere, rotation precomputed (sphere_data.k65, bank5).
+//  Packed by symmetry: 66 frames x 15 points (tools/gen_shapes.py).
+// ============================================================================
+
+bank bank5;
+
+[ SPHERE_NPTS = 30 ]        // points (must match tools/gen_shapes.py)
+var SphereAnimA = 0xF100;   // animation frames (fixed address, sphere_data.k65)
+var sphere_flip  = 0xEC;    // 0x80 in the 2nd half turn (far bits flipped)
+
+// Sphere (bank5): 30 points symmetric under p -> -p and under the 180-degree turn about X,
+// so only one point of each opposite pair is stored (15 x 2 bytes, frames of 32 bytes), and
+// frame f + 66 is frame f with every far bit flipped (the turn keeps the set, see gen_shapes.py).
+// Point 2k = stored point k, point 2k+1 = its opposite (x byte negated whole: -x and the far bit
+// flipped, y byte 128 - y). sphere_flip = 0x80 in the second half turn.
+inline sphere_body {
+    {
+        a=shape_i a?[SPHERE_NPTS] =={ goto .done }              // all points done
+        a=INTIM a?shape_tmin <{ goto .done }                    // not enough time left here
+        a=shape_i a&0xFE y=a a=(ptrC),y tmp3=a y++ a=(ptrC),y tmp4=a
+        a=shape_i a>> <{ goto .stored }
+        a=tmp4 a^0xFF c- a+129 tmp4=a a=tmp3 a^0xFF c- a+1 tmp3=a   // the opposite point
+        .stored:
+        a=tmp3 a^sphere_flip tmp3=a
+        shape_place
+        shape_i++
+    } always                                                    // (loop too long for a branch:
+    .done:                                                      //  exits jump via goto)
+}
+
+// frame pointer (bank4, before the far call): 66 stored frames of 32 bytes, the second half turn
+// = far bits flipped
+inline sphere_frame {
+    x=0 a=shape_frame a?[SHAPE_FRAMES/2] >={ c+ a-[SHAPE_FRAMES/2] x=0x80 }
+    sphere_flip=x
+    y=a a<< a<< a<< a<< a<< ptrC=a              // (frame*32) low byte
+    a=y a>> a>> a>> c- a+&>SphereAnimA ptrC+1=a // + frame/8 pages
+}
+
+// the tables are read through fixed-address vars, so reference their labels once (in a
+// never-executed block) or the linker drops them as unused
+func sphere_points {
+    never { a=SphereAnim a=ShapeScale5 a=ShapeLineBand5 a=ShapeCandBase5 a=ShapeCandOff5 a=ShapeLineCand5 }
+    sphere_body
+}

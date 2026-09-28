@@ -1,0 +1,120 @@
+// ============================================================================
+//  Shapes - shared definitions: constants, RAM, fixed table addresses, colours,
+//  song choreography (mood -> speed / shape / transition).
+//  Every shape has its own file (sphere, cube, pyramid, diamond, logo); shared code is in shape_*.k65.
+//  files.lst order: shape_defs -> generated *_data -> shape_math, shape_place -> the shapes ->
+//  shape_live -> shapes (K65 crashes on a `far` call to a function that is defined later).
+// ============================================================================
+
+bank bank4;
+
+// shape ids (shape_cur)
+[ SHAPE_SPHERE = 0, SHAPE_CUBE = 1, SHAPE_PYRAMID = 2, SHAPE_DIAMOND = 3, SHAPE_ATARI = 4, SHAPE_ALTAIR = 5 ]
+
+[ SHAPE_FRAMES = 132 ]          // animation frames per turn (the sphere stores 66, see sphere_body)
+[ SHAPE_NB = 15, SHAPE_TOP = 30 ]   // bands, blank lines above the dot area
+[ SHAPE_CX = 80, SHAPE_CY = 82 ]    // centre: pixel / line within the dot area
+[ SHAPE_SPEED = 0x40 ]          // speed at effect start (1/256 animation frames per video frame),
+                                //  then it glides to ShapeModeSpeed of the current song mood
+// Points are processed wherever CPU time is left, one running index for the frame:
+// below the shape (still in the picture, the CPU is idle there) -> overscan -> vblank.
+// Before every point the routine checks the RIOT timer and stops early when fewer than
+// shape_tmin units are left in the current phase; the next phase continues from there.
+// (Points still left at the end of vblank are simply not shown for that one frame.)
+[ SHAPE_TOP_TIM = 36 ]          // picture: TIM64T over the SHAPE_TOP lines (zero at line 29 cycle ~49),
+[ SHAPE_BOT_TIM = 238 ]         //  then from the first band line to the end of the picture (line 229
+                                //  cycle ~46, as T1024T 18) - verify 312 lines after changing the kernel
+[ SHAPE_TMIN_BLANK = 8 ]        // overscan/vblank: TIM64T units (INTIM = n guarantees only >(n-1)*64
+                                //  cycles: 8 -> >= 449; worst point ~400 (pyramid, diamond) + return ~40.
+                                //  6 was not enough in Stella: vblank ended with ~40 cycles left)
+[ SHAPE_TMIN_TRANS = 2 ]        // added during shape transitions: the explosion's range checks make
+                                //  the worst point ~470 cycles (measured; otherwise <= ~400)
+
+// Fixed addresses of the placement tables (generated, shape_data.k65): the same in the dot
+// engine bank (bank1) and the sphere's bank (bank5), because shape_place runs in both
+var ShapeScaleA = 0xFC00, ShapeLineBand = 0xFE00;
+var ShapeCandBase = 0xFEA8, ShapeCandOff = 0xFEE4, ShapeLineCand = 0xFF20;
+[ SHAPE_BACKROWS = 30 ]     // back points use candidate rows 5-9 (5 rows x 6)
+
+// RAM: 0x80-0xCA per-band positions of the 5 objects (0 = no dot), 15 bytes each
+var shape_bx = 0x80;
+var shape_bx0 = 0x80, shape_bx1 = 0x8F, shape_bx2 = 0x9E, shape_bx3 = 0xAD, shape_bx4 = 0xBC;
+var shape_frac  = 0xCB;         // animation position, fraction
+var shape_frame = 0xCC;         // animation frame 0..SHAPE_FRAMES-1
+var shape_boost = 0xCD;         // kick speed surge 32 -> 0 (x4 = speed add in 1/256 frames)
+var shape_pulse = 0xCE;         // hat pulse, decays (scale level = pulse/4)
+var shape_i     = 0xCF;         // point routine: next point
+var shape_pv0   = 0xD5;         // previous volumes (attack detection)
+var shape_pv1   = 0xD6;
+var shape_tmin  = 0xD7;         // point routine: stop when INTIM < shape_tmin
+var shape_colp[2] = 0xD8;       // pointer to the band colours of the current fade level
+var shape_speed = 0xDA;         // current base speed (glides towards ShapeModeSpeed[mood])
+var shape_cur   = 0xDB;         // shape of the current frame (SHAPE_SPHERE ... SHAPE_ALTAIR)
+var shape_imp   = 0xE8;         // implosion level 0..5 (scale 1 / 2^level, 5 = collapsed)
+var shape_tt    = 0xE9;         // shape transition timer 24 -> 0 (shape switches at 12)
+var shape_ttype = 0xEA;         // transition: 0 implosion, 1 explosion
+var shape_exp   = 0xEB;         // explosion level 0..4 (scale 2^level, points off-screen are dropped)
+
+// Live shapes (cube, pyramid, diamond): vertex slots shared by all of them (x byte = offset+64 |
+// far side bit 7, y byte). 0..2 = rotated once per frame (picture phase) by the shape's *_setup and
+// kept until the frame's points are done; 3..5 = derived at the start of every point phase by the
+// shape's prep (scratch that is free during the points: ptrA/ptrB after the music player,
+// shape_colp until the end of vblank). The bytes are borrowed: ptrC and logo_base are not used by
+// the live shapes, ED-EF are free.
+var shape_v0x = 0xE4, shape_v0y = 0xE5;     // (= ptrC)
+var shape_v1x = 0xEC, shape_v1y = 0xED;     // (EC = logo_base)
+var shape_v2x = 0xEE, shape_v2y = 0xEF;
+var shape_v3x = 0xF4, shape_v3y = 0xF5, shape_v4x = 0xF6, shape_v4y = 0xF7, shape_v5x = 0xD8, shape_v5y = 0xD9;
+// rotation scratch (*_setup, above the picture): ptrA (F6-F7 = stack while shape_mul is called: the
+// stack is 8 bytes deep there) + mus_f0/mus_f1 (not read here)
+var shape_sy = 0xF4, shape_cy = 0xF5, shape_cyg = 0xDD, shape_t = 0xDF;
+var shape_zp0 = 0x00, shape_zp1 = 0x01; // base for zero page indexed reads (a=shape_zp0,x = RAM at x)
+var shape_zp80 = 0x80, shape_zp81 = 0x81; //  ... and for x = RAM - 0x80 (ShapeZp: bit 7 = negate flag)
+
+// Band colours (top -> bottom: light from above). One 256-byte page per song mood
+// (section mode): CALM blue, FULL green, BREAK red, BUILD purple,
+// + logo pages without the far-side darkening (flat logos): 4 grey (Altair), 5 red (Atari).
+// Luminance never below 2 (grey 0 would be black = invisible).
+// Inside a page: 8 fade levels x 32 = [0..15] front (bright, P0/M0/BL),
+// [16..31] back (6 luminance steps darker, P1/M1).
+data ShapeCol {
+    address 0xF400          // fixed (F400-F9FF): keeps FA00-FBFF + the end of bank4 free for the
+                            //  far-call stubs, which must sit at the same address as in the data banks
+    for x=0..1535 eval [ mood = floor(x/256), lvl = floor((x%256)/32), b = x%16,
+        back = mood > 3 ? 0 : floor(x/16)%2,
+        hue = mood==0 ? 0xB0 : (mood==1 ? 0x50 : (mood==2 ? 0x60 : (mood==3 ? 0xA0 : (mood==4 ? 0x00 : 0x60)))),
+        lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
+        lvl==0 ? 0 : (lum < 2 ? hue + 2 : hue + (lum & 14)) ]
+}
+
+// Base rotation speed per song mood (1/256 animation frames per video frame; 132 frames = 1 turn)
+//                    CALM   FULL   BREAK  BUILD
+data ShapeModeSpeed { 0x40   0x80   0x50   0xC0 }
+
+// Shape per song mood:  CALM            FULL             BREAK            BUILD
+data ShapeModeShape { [SHAPE_CUBE]    [SHAPE_PYRAMID]  [SHAPE_DIAMOND]  [SHAPE_SPHERE] }
+
+// Implosion curve over the transition timer (index 0..24, counts down):
+// 24..13 collapse (level 0 -> 5, 2 frames per level), 12 = shape switch, 12..1 grow back
+data ShapeImplode {
+    for x=0..24 eval [ x==0 ? 0 : (x > 12 ? min(5, floor((25-x)/2)) : min(5, floor(x/2))) ]
+}
+
+// Explosion curve: 24..13 blow up (x2 per 2 frames, x16 = gone), 12 = switch,
+// 12..1 the new shape flies in from outside (x16 -> x1)
+data ShapeExplode {
+    for x=0..24 eval [ x==0 ? 0 : (x > 12 ? min(4, floor((25-x)/2)) : min(4, floor(x/3))) ]
+}
+
+// Transition used when entering a mood: calm parts implode, energetic ones explode
+//                    CALM   FULL   BREAK  BUILD
+data ShapeModeTrans { 0      1      0      1 }
+
+// Song mood per sequence position (the same table as EqSongMode in eqsine.k65, from
+// tools/song_analysis.py): 0 CALM, 1 FULL, 2 BREAK, 3 BUILD
+data ShapeSongMode {
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2 2
+    3 3 3 3 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 1 1 1 1 1 1 1 1 2 2 2 2
+    2 2 2 2 0 0 0 0 3 3 3 3 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 0 0 0 0
+    0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0
+}

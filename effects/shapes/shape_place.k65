@@ -1,0 +1,58 @@
+// ============================================================================
+//  Shapes - shape_place: one point (x byte, y byte) -> the kernel's band slots.
+//  Shared by every shape; expanded in the dot engine bank (bank1) and the sphere's bank (bank5).
+//  in:  ptrD = scale table (hat pulse), shape_tmin (+ what the shape's routine sets)
+// ============================================================================
+
+// Implosion (shape_imp > 0): A = signed offset from the centre, scaled by 1 / 2^shape_imp (5 = 0).
+inline shape_shrink {
+    x=shape_imp x?5 >={ a=0 } else { { a?0x80 a>>> x-- }!= } // arithmetic shift right
+}
+
+// Explosion: A = signed offset doubled shape_exp times. After every doubling the point must still
+// be inside the dot area (x -72..71 -> pixels 8..151, y -82..82 -> lines 0..164), otherwise
+// it flew off-screen and is dropped (goto .skip) - an out-of-range point would index past
+// the band tables. Doubling a value in range can only wrap to a value that fails the test.
+// (Written out inside shape_place: a local label is only visible within one inline.)
+
+// Scale + place one point: tmp3 = x byte (offset+64, bit 7 = far side), tmp4 = y byte.
+// Picks the band and the nearest free object slot, stores the positioning value.
+// Outside shape transitions (almost always) the implosion / explosion code is skipped with ONE
+// test: the transition path is out of line (.trans) and rejoins at .band. A transition is either
+// an implosion (shape_imp) or an explosion (shape_exp), never both (shape_music sets the other one to 0).
+inline shape_place {
+    a=shape_imp a|shape_exp !={ goto .trans }                // shape transition running
+    a=tmp3 a&0x7F y=a a=(ptrD),y c- a+[SHAPE_CX] tmp1=a      // screen x
+    y=tmp4 a=(ptrD),y c- a+[SHAPE_CY] y=a                     // line in the dot area
+    .band:
+    a=ShapeLineBand,y tmp2=a                                  // band
+    a=tmp3 <0{                                                // candidate list: back points
+        a=ShapeLineCand,y c- a+[SHAPE_BACKROWS] x=a           //  prefer P1/M1 (dim colour),
+    } else {
+        x=ShapeLineCand,y                                     //  front ones P0/M0/BL (bright)
+    }
+    {
+        a=ShapeCandBase,x <0 break                            // band full: drop the point
+        c- a+tmp2 y=a
+        a=shape_bx,y =={                                      // free slot
+            a=tmp1 c+ a-ShapeCandOff,x shape_bx,y=a
+            break
+        }
+        x++
+    } always
+    goto .skip
+    .trans:
+    a=shape_exp !={ goto .explode }
+    a=tmp3 a&0x7F y=a a=(ptrD),y shape_shrink c- a+[SHAPE_CX] tmp1=a // implosion
+    y=tmp4 a=(ptrD),y shape_shrink c- a+[SHAPE_CY] y=a
+    goto .band
+    .explode:
+    a=tmp3 a&0x7F y=a a=(ptrD),y
+    x=shape_exp { a<< tmp2=a c- a+[72] a?144 >={ goto .skip } a=tmp2 x-- }!=
+    c- a+[SHAPE_CX] tmp1=a                                    // screen x
+    y=tmp4 a=(ptrD),y
+    x=shape_exp { a<< tmp2=a c- a+[82] a?165 >={ goto .skip } a=tmp2 x-- }!=
+    c- a+[SHAPE_CY] y=a                                       // line in the dot area
+    goto .band
+    .skip:
+}

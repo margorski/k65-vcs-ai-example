@@ -1,0 +1,26 @@
+// ============================================================================
+//  Shapes - rotation math of the live shapes (shared by cube, pyramid, diamond).
+//  Same rotation as the precomputed sphere (tools/gen_shapes.py rotate(), turns X/Y/Z 1/2/1):
+//  R = Rz(a) * Ry(2a) * Rx(a), a = frame * 2pi/132; a live shape's vertices are combinations of the
+//  columns of R. sin/cos tables (shape_data.k65, rotation bank) have amplitude 63 (ShapeSin; the
+//  "G" tables pre-multiply a shape factor: ShapeSinG = 1/sqrt(3) x 63, DiamondSin = 0.62 x 63;
+//  cos = ShapeSin+33,x) and products use quarter squares: sq(|a+b|) - sq(|a-b|) = 2ab/63 -> results
+//  in "double units" (126 = 1.0), which are exactly the screen scales: x px = v/4 (radius ~32),
+//  y lines = v/2 (radius 63).
+// ============================================================================
+
+inline shape_mul_body { // A = tmp1 * tmp2 * 2/63 (|tmp1|,|tmp2| <= 63), uses Y, tmp3
+                        //  (the body of the shape_mul subroutine, in the rotation bank: call shape_mul)
+    a=tmp1 c- a+tmp2 <0{ a^0xFF c- a+1 } y=a a=ShapeSq,y tmp3=a
+    a=tmp1 c+ a-tmp2 <0{ a^0xFF c- a+1 } y=a a=tmp3 c+ a-ShapeSq,y
+}
+inline shape_half { a?0x80 a>>> a+0 }                   // A/2 rounded (carry = the lost bit)
+inline shape_ovf { <<={ <0{ a=0x7F } else { a=0x81 } } } // after a sum: clamp on signed overflow
+inline shape_xb { a?0x80 a>>> a?0x80 a>>> a+64 }        // double units -> x byte: 64 + v/4 rounded
+inline shape_yb { shape_half a^0xFF c- a+65 }           // -> y byte: 64 - v/2 (screen y grows down)
+
+// the multiply subroutine: one copy, in the rotation bank (call shape_mul)
+bank bank2;
+func shape_mul {
+    shape_mul_body
+}

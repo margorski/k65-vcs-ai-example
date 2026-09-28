@@ -12,13 +12,19 @@ k65-vcs-ai-example/
 ├── effects/rainbow.k65  rainbow background (bank core)
 ├── effects/plasma.k65   plasma (bank bank2, called with `far plasma`)
 ├── effects/eqsine.k65   music-reactive sprite helix (bank bank3, `far eqsine`)
-├── effects/sphere_defs.k65  sphere: constants, RAM, table addresses, point routine body
-├── effects/sphere_data.k65  sphere: GENERATED data banks 5, 2, 1 (tools/gen_sphere.py)
-├── effects/sphere.k65       sphere: kernel + music (bank4, `far sphere`)
+├── effects/shapes/          3D point objects, effect `shapes` (bank4, `far shapes`):
+│   ├── shapes.k65           the effect: frame loop, music reaction, kernel (bank4)
+│   ├── shape_defs.k65       shared: constants, shape ids, RAM, colours, mood tables
+│   ├── shape_math.k65       shared: rotation math (quarter-square multiply shape_mul, bank2)
+│   ├── shape_place.k65      shared: point -> band slot (bank1 + bank5)
+│   ├── shape_live.k65       shared: the ONE point routine of the live shapes (bank1)
+│   ├── sphere.k65 cube.k65 pyramid.k65 diamond.k65 logo.k65   one file per shape
+│   └── *_data.k65           GENERATED (tools/gen_shapes.py): shape_data (shared tables),
+│                            sphere_data, diamond_data, logo_data
 ├── music/               tracker-style player (music_player_mini.k65) + song data, in bank "core"
 ├── tools/vcs_frame_check.py   headless timing checker + frame renderer (py65 via uv)
 ├── tools/song_analysis.py     plays the whole song headless, prints per-section audio features
-├── tools/gen_sphere.py        precomputes the sphere/shape rotation + live-diamond tables -> sphere_data.k65
+├── tools/gen_shapes.py        generates effects/shapes/*_data.k65 (sphere animation, tables, point lists)
 ├── docs/                this knowledge base
 └── bin/                 build output: demo.bin (32K F4), demo.lst, demo.sym, demo.gmap, frames.png
 ```
@@ -48,7 +54,7 @@ main {
     {
         // rainbow            // effect in the same bank: plain call (currently disabled)
         // far plasma         // effect in another bank: far call (currently disabled)
-        far sphere
+        far shapes
         // far eqsine         // (currently disabled)
     } always
 }
@@ -86,10 +92,10 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0x80-0xCF` eqsine (`eq_x0/x1/c0/c1/en[16]`), `0xE8-0xEF` eqsine state; during the frame
   eqsine reuses the scratch bytes `0xE1-0xE7` + `0xEE` for scanner/ball/spark kernel parameters
 - (`0x80-0xCF` is shared per-effect scratch: every effect initialises what it uses)
-- `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` sphere (5 x 15 band positions + animation/music state);
+- `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` shapes (5 x 15 band positions + animation/music state);
   live pyramid/diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` +
   `0xD8-0xD9`, rotation scratch above the picture `0xF4-0xF5`, `0xE6-0xE7`, `0xCF`, `0xD7`, `0xDD`,
-  `0xDF` (mus_f0/f1: the sphere does not read them); F6-F7 = stack during `call lv_mul` (10 deep)
+  `0xDF` (mus_f0/f1: the shapes do not read them); F6-F7 = stack during `call shape_mul` (10 deep)
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)
@@ -103,9 +109,9 @@ Update the map comment when you claim new addresses - `var` does not allocate an
 
 `music/music_player_mini.k65` plays `music/song_mini_sv18.k65` (4 sequences over 2 TIA channels).
 `song_player` is called once per frame (`far` from effects in other banks; it lives in bank "core").
-Bank map: core main + music, bank1 sphere dot engine (live shapes + logos), bank2 live-shape rotation
+Bank map: core main + music, bank1 shapes dot engine (live shapes + logos), bank2 live-shape rotation
 (+ plasma), bank3 eqsine (disabled in main.k65 = empty),
-bank4 sphere kernel, bank5 sphere data, bank6 + bank7 free.
+bank4 shapes kernel, bank5 sphere, bank6 + bank7 free.
 Song loops at sequence 102 (`song_seq_wrap`). `seqbrk=a=0xFF` = the effect never ends.
 The player also stores what it writes to AUDVx/AUDFx/AUDCx into `mus_v0/f0/c0/v1/f1/c1` - use them for
 music-reactive effects.

@@ -1,0 +1,54 @@
+// ============================================================================
+//  Logos - Atari (SHAPE_ATARI) and Altair (SHAPE_ALTAIR): flat point sets spun around
+//  the vertical axis at runtime (bank1, tables in logo_data.k65).
+// ============================================================================
+
+bank bank1;
+
+var logo_base = 0xEC;       // start index of the point set
+
+// Atari logo: from the 2nd calm part (sequence 44) to the end of the song, then the song
+// loops and the shapes start over. Colour: Atari red (the red mood page).
+[ LOGO_SEQ = 44, LOGO_PAGE = 5 ]
+// Altair logo (demogroup): the first verse (sequences 0..7), grey, then the calm cube.
+[ ALTAIR_SEQ_END = 8, ALTAIR_PAGE = 4 ]
+[ LOGO_BACKDIM = 3 ]        // fade levels darker while the back of a logo faces the viewer
+
+// Atari (SHAPE_ATARI) and Altair (SHAPE_ALTAIR) point sets in the same tables, each
+// ended by LogoY = 0xFF, logo_base = start index. Flat, spinning around the vertical axis.
+// A flat object has no per-point depth worth shading (at face-on every point is at depth 0,
+// the left/right halves would swap bright/dim instantly), so all points are "front" (stable
+// slot assignment, no jitter) and the whole logo is dimmed while its back faces the viewer
+// (colour page + fade level: logo_backdim, shapes.k65). Per point LogoX = x0 (signed px), LogoY = y byte.
+// x = x0*c/64 with c = 64*cos (ptrC): quarter squares with sq[n] = n*n/128 give x0*c/32,
+// halved with rounding (half the error of a direct /64 table).
+inline logo_body {
+    {
+        a=INTIM a?shape_tmin <{ goto .done }                    // not enough time left here
+        a=shape_i c- a+logo_base x=a                            // index in the logo tables
+        a=LogoY,x <0{ goto .done }                              // 0xFF: end of this logo
+        a=LogoX,x c- a+ptrC <0{ a^0xFF c- a+1 } y=a a=LogoSq,y tmp1=a      // sq(|x0+c|)
+        a=LogoX,x c+ a-ptrC <0{ a^0xFF c- a+1 } y=a
+        a=tmp1 c+ a-LogoSq,y                                    // x0*c/32
+        a?0x80 a>>> a+64 tmp3=a                                 // /2 rounded (carry) + 64 = x byte
+        a=LogoY,x tmp4=a
+        shape_place
+        shape_i++
+    } always
+    .done:
+}
+
+// point set + spin angle -> logo_body (x = x0 * cos(angle))
+func logo_points {
+    x=shape_frame x?[LOGO_COS_N] >={ a=[SHAPE_FRAMES] c+ a-shape_frame x=a }   // mirror: cos(N-f) = cos(f)
+    a=LogoCos,x ptrC=a                              // c = 64*cos(angle)
+    a=0 x=shape_cur x?[SHAPE_ALTAIR] =={ a=[LOGO_ALTAIR_BASE] } logo_base=a
+    logo_body
+}
+
+// colour (bank4, vblank): A = fade level -> darker while the back of the logo faces the viewer
+inline logo_backdim {
+    x=shape_frame x?[SHAPE_FRAMES/4] >={ x?[SHAPE_FRAMES*3/4] <{   // cos < 0: 90..270 degrees
+        a?[LOGO_BACKDIM+1] >={ c+ a-[LOGO_BACKDIM] }
+    } }
+}

@@ -1,0 +1,53 @@
+// ============================================================================
+//  Diamond - elongated octahedron, rotated live (bank2), points by shape_live.
+// ============================================================================
+
+bank bank2;
+
+//  Same rotation as the precomputed shapes (tools/gen_shapes.py rotate(), turns X/Y/Z 1/2/1):
+//  R = Rz(a) * Ry(2a) * Rx(a), a = frame * 2pi/132. The diamond's vertices are
+//  +-T (tip, column 1 of R), +-U, +-W (girdle, 0.62 x columns 0 and 2):
+//      U = 0.62 * ( cy*cz,  cy*sz,  -sy )
+//      T = ( sx*sy*cz - cx*sz,  sx*sy*sz + cx*cz,  sx*cy )
+//      W = 0.62 * ( cx*sy*cz + sx*sz,  cx*sy*sz - sx*cz,  cx*cy )
+//  sin/cos tables have amplitude 63 (DiamondSin: 0.62 x 63 = 39) and products use quarter
+//  squares: sq(|a+b|) - sq(|a-b|) = 2ab/63 -> results in "double units" (126 = 1.0), which
+//  are exactly the screen scales: x px = v/4 (radius ~32), y lines = v/2 (radius 63).
+//  12 multiplies, ~1100 cycles per frame. Max error vs the float rotation: 1 px / 2 lines.
+// ---------------------------------------------------------------------------
+inline diamond_rotate {
+    a=shape_frame a<< >={ c- a+[256-SHAPE_FRAMES] }       // Y angle = 2 x frame, wrapped to 0..131
+    else { a?[SHAPE_FRAMES] >={ a-[SHAPE_FRAMES] } }
+    y=a a=ShapeSin,y shape_sy=a a=ShapeSin+33,y shape_cy=a a=DiamondSin+33,y shape_cyg=a
+    x=shape_frame                                       // X and Z angle = frame (X stays = index)
+    // U: x = cy*cz, y = cy*sz, far side when z = -sy < 0 (sy > 0)
+    a=shape_cyg tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul shape_xb tmp4=a
+    a=ShapeSin,x tmp2=a call shape_mul shape_yb shape_v1y=a
+    a=0 c+ a-shape_sy a&0x80 a|tmp4 shape_v1x=a
+    // T: t = sx*sy ; x = t*cz - cx*sz, y = t*sz + cx*cz, far when sx*cy < 0
+    a=ShapeSin,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
+    tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSin+33,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 shape_ovf shape_xb tmp4=a
+    a=ShapeSin,x a^shape_cy a&0x80 a|tmp4 shape_v0x=a
+    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSin+33,x tmp1=a tmp2=a call shape_mul c- a+tmp4 shape_ovf shape_yb shape_v0y=a
+    // W: t = cx*sy (x 0.62) ; x = t*cz + sx*sz, y = t*sz - sx*cz (sx x 0.62), far when cx*cy < 0
+    a=DiamondSin+33,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
+    tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
+    a=DiamondSin,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul c- a+tmp4 shape_ovf shape_xb tmp4=a
+    a=ShapeSin+33,x a^shape_cy a&0x80 a|tmp4 shape_v2x=a
+    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
+    a=DiamondSin,x tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 shape_ovf shape_yb shape_v2y=a
+}
+
+// Opposite vertex: the x byte negated as a whole (-(64+x | back) = 64-x | the other side),
+// y byte = 128 - y. Computed per phase into shape_v3x.. (6 bytes, not kept between phases).
+inline diamond_prep {
+    a=shape_v0x a^0xFF c- a+1 shape_v3x=a a=shape_v0y a^0xFF c- a+129 shape_v3y=a
+    a=shape_v1x a^0xFF c- a+1 shape_v4x=a a=shape_v1y a^0xFF c- a+129 shape_v4y=a
+    a=shape_v2x a^0xFF c- a+1 shape_v5x=a a=shape_v2y a^0xFF c- a+129 shape_v5y=a
+}
+
+func diamond_setup {                // rotate the vertices (top of the picture)
+    diamond_rotate
+}

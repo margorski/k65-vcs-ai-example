@@ -110,10 +110,10 @@ SUPERCHIP <- 0
 
 far_jump_stubs <- []
 
-// far-call stubs at fixed addresses (project addition): the sphere banks 5-6 are full except one
-// free block that must stay whole for sph_proc5 - a stub placed by the allocator
-// could land in its middle. FFC5-FFEC is kept free in the sphere banks for these.
-FIXED_STUBS <- { sph_proc5 = 0xFFC5 }
+// far-call stubs at fixed addresses (project addition): the sphere's bank 5 is nearly full - a stub
+// placed by the allocator could split its last free block. FFC5-FFEC is kept free there
+// (the placement tables end at FFC4, tools/gen_shapes.py).
+FIXED_STUBS <- { sphere_points = 0xFFC5 }
 
 
 

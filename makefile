@@ -37,8 +37,8 @@ check: $(ROM)
 report: $(ROM)
 	python3 tools/rom_report.py bin/demo
 
-# CPU slack per phase + stack depth over the whole sphere part (Altair, cube, pyramid, diamond,
-# sphere; ~35 s), split by shape (sp_shape 0xDB), points finished per frame (sp_i 0xCF)
+# CPU slack per phase + stack depth over the whole shapes part (Altair, cube, pyramid, diamond,
+# sphere; ~35 s), split by shape (shape_cur 0xDB), point index reached per frame (shape_i 0xCF)
 stats: $(ROM)
 	uv run --quiet --with py65 --with pillow tools/vcs_frame_check.py $(ROM) --frames 3200 --stats --sample CF --group DB
 

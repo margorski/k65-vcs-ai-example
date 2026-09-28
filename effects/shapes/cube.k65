@@ -1,0 +1,61 @@
+// ============================================================================
+//  Cube - 8 corners + 12 edge midpoints, rotated live (bank2), points by shape_live.
+// ============================================================================
+
+bank bank2;
+
+// rotation scratch (free above the picture)
+var cube_c0 = 0xD7, cube_c1 = 0xE7, cube_c2 = 0xCF, cube_t2 = 0xE6;
+
+// ---------------------------------------------------------------------------
+//  Live cube: vertices = G x (+-c0 +- c1 +- c2) with G = 1/sqrt(3) (the ShapeSinG
+//  table), c = the columns of R. Vertex ids: 0 A = (+,+,+), 1 B = (+,+,-), 2 C = (+,-,+),
+//  3 D = (-,+,+), 4..7 = -A -B -C -D. Kept: A, B, C (their x bytes carry their own far bits, bit 7
+//  of A's y byte carries D's); D = A - B - C -> byte A - B - C + 128, per point phase; the
+//  opposite vertices are negated while fetching. 14 multiplies (~1100 cycles).
+// ---------------------------------------------------------------------------
+inline cube_rotate {
+    a=shape_frame a<< >={ c- a+[256-SHAPE_FRAMES] }       // Y angle = 2 x frame, wrapped to 0..131
+    else { a?[SHAPE_FRAMES] >={ a-[SHAPE_FRAMES] } }
+    y=a a=ShapeSin,y shape_sy=a a=ShapeSin+33,y shape_cy=a a=ShapeSinG+33,y shape_cyg=a
+    a=ShapeSinG,y a<< a^0xFF c- a+1 cube_c0=a            // z of G c0 = -G sy (double units)
+    x=shape_frame                                       // X and Z angle = frame (X stays = index)
+    a=ShapeSinG,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a // t1 = G sx*sy
+    a=ShapeSinG+33,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half cube_t2=a // t2 = G cx*sy
+    // z (far bits): c1 = G sx*cy, c2 = G cx*cy
+    a=ShapeSinG,x tmp1=a a=shape_cy tmp2=a call shape_mul cube_c1=a
+    a=ShapeSinG+33,x tmp1=a a=shape_cy tmp2=a call shape_mul cube_c2=a
+    a=cube_c0 c- a+cube_c1 c- a+cube_c2 a&0x80 shape_v0x=a // A
+    a=cube_c0 c- a+cube_c1 c+ a-cube_c2 a&0x80 shape_v1x=a // B
+    a=cube_c0 c+ a-cube_c1 c- a+cube_c2 a&0x80 shape_v2x=a // C
+    a=cube_c1 c- a+cube_c2 c+ a-cube_c0 a&0x80 shape_v0y=a // D (-> bit 7 of A's y byte)
+    // x: c0 = G cy*cz, c1 = t1*cz - G cx*sz, c2 = t2*cz + G sx*sz
+    a=shape_cyg tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul cube_c0=a
+    a=shape_t tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSinG+33,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 cube_c1=a
+    a=cube_t2 tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSinG,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul c- a+tmp4 cube_c2=a
+    a=cube_c0 c- a+cube_c1 c- a+cube_c2 shape_ovf shape_xb a|shape_v0x shape_v0x=a
+    a=cube_c0 c- a+cube_c1 c+ a-cube_c2 shape_ovf shape_xb a|shape_v1x shape_v1x=a
+    a=cube_c0 c+ a-cube_c1 c- a+cube_c2 shape_ovf shape_xb a|shape_v2x shape_v2x=a
+    // y: c0 = G cy*sz, c1 = t1*sz + G cx*cz, c2 = t2*sz - G sx*cz
+    a=shape_cyg tmp1=a a=ShapeSin,x tmp2=a call shape_mul cube_c0=a
+    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSinG+33,x tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul c- a+tmp4 cube_c1=a
+    a=cube_t2 tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSinG,x tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 cube_c2=a
+    a=cube_c0 c- a+cube_c1 c- a+cube_c2 shape_ovf shape_yb a|shape_v0y shape_v0y=a
+    a=cube_c0 c- a+cube_c1 c+ a-cube_c2 shape_ovf shape_yb shape_v1y=a
+    a=cube_c0 c+ a-cube_c1 c- a+cube_c2 shape_ovf shape_yb shape_v2y=a
+}
+
+// per point phase: D -> shape_v3x/v3y (byte = A - B - C + 128, x: low 7 bits + D's far bit)
+inline cube_prep {
+    a=shape_v1x a&0x7F tmp1=a a=shape_v2x a&0x7F c- a+tmp1 tmp1=a
+    a=shape_v0x a&0x7F c+ a-tmp1 c- a+128 tmp1=a a=shape_v0y a&0x80 a|tmp1 shape_v3x=a
+    a=shape_v1y c- a+shape_v2y tmp1=a a=shape_v0y a&0x7F c+ a-tmp1 c- a+128 shape_v3y=a
+}
+
+func cube_setup {                   // rotate the vertices (top of the picture)
+    cube_rotate
+}

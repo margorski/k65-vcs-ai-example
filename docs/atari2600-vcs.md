@@ -132,7 +132,7 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
 - **Many missiles from two**: position M0/M1 once at the top, then move them per slot with HMMx on
   the slot's HMOVE (-8..+7 px per slot) and switch ENAMx per slot -> 32 sparks. HMMx ignores bits
   0-3 and ENAMx uses only bit 1, so one table byte can hold both the move and the enable.
-- **3D point objects** (`effects/sphere*.k65`): precompute the rotation offline (ROM is cheap, 6502
+- **3D point objects** (`effects/shapes/`): precompute the rotation offline (ROM is cheap, 6502
   multiplies are not) and at runtime only pick/scale frames and sort points into bands. Band of 11
   lines: position P0 P1 M0 M1 BL (one line each), HMOVE line, then each object's dot on its own line
   (2 lines tall, switched on at the line start - variable timing is fine there - and off in the
@@ -148,7 +148,7 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
   frame), a jump of the summed volume -> beat trigger.
 - **Fades**: put 8 luminance-scaled copies of a colour table in consecutive pages and select the page
   via the pointer high byte - zero extra kernel cost.
-- **Live 3D rotation on the 6502** (the sphere effect's diamond): signed multiply by quarter squares,
+- **Live 3D rotation on the 6502** (the shapes effect's cube, pyramid, diamond): signed multiply by quarter squares,
   `a*b = sq(|a+b|) - sq(|a-b|)` with one table (`sq(n) = n*n/126` for values -63..63 gives 2ab/63, i.e.
   double precision - scale the table so the result unit equals what you need next). A rotation matrix
   = 12 such multiplies (~1000 cycles). Rotate only what you must: an octahedron's vertices ARE the
@@ -177,5 +177,5 @@ A PAL-coded ROM shown on NTSC (or vice versa) has wrong colours and rolls - run 
 - `far func` generates `__far_<from>_<to>__func` stubs (BIT hotspot, JSR, BIT back, RTS). A stub
   lives in BOTH banks at the same address, wherever the allocator finds room - it can land in the
   middle of a bank's only big free block. This project's `.nut` pins chosen stubs (`FIXED_STUBS`:
-  sph_proc5/6 at FFC5/FFCF) with `sec_set_fixaddr`.
+  sphere_points at FFC5) with `sec_set_fixaddr`.
 - This project pre-allocates 8 banks -> 32 KB F4 ROM (`-bs F4` in Stella).

@@ -33,7 +33,7 @@ Przykładowy projekt na Atari 2600 (VCS) w asemblerze K65, zbudowany na wzór
 
 4. **Kula 3D z "latających pikseli"** – 30 punktów na sferze obracające się jednocześnie wokół
    osi X, Y i Z, rysowane wszystkimi pięcioma obiektami TIA (P0, P1, M0, M1, ball) jako kropki 2×2.
-   Obrót jest wyliczony z góry (`tools/gen_sphere.py`, 132 klatki w bankach 5–7); w czasie
+   Obrót jest wyliczony z góry (`tools/gen_shapes.py`); w czasie
    rzeczywistym VCS wybiera klatkę, skaluje ją i rozkłada punkty na obiekty (15 pasów po 11 linii,
    w każdym 5 kropek). Punkty z tyłu kuli są ciemniejsze (rysują je P1/M1 w przyciemnionym kolorze,
    przód – P0/M0/ball w jasnym), co podkreśla trójwymiarowość. Stopa – zryw prędkości obrotu,
@@ -73,8 +73,9 @@ make clean
 - `effects/rainbow.k65` – efekt tęczy (parametry na górze pliku: liczba linii, amplituda falowania)
 - `effects/plasma.k65` – plazma (bank `bank2`, wywoływana przez `far plasma`)
 - `effects/eqsine.k65` – helisa-equalizer na sprite'ach (bank `bank3`)
-- `effects/sphere_defs.k65`, `effects/sphere_data.k65` (wygenerowany), `effects/sphere.k65` – kula 3D
-  (bank `bank4` + dane w `bank5`, `bank2`, `bank1`); po zmianie parametrów kuli: `python3 tools/gen_sphere.py > effects/sphere_data.k65`
+- `effects/shapes/` – efekt `shapes`: bryły 3D z punktów (bank `bank4` + `bank5`, `bank2`, `bank1`);
+  każda bryła ma własny plik (`sphere.k65`, `cube.k65`, `pyramid.k65`, `diamond.k65`, `logo.k65`), wspólny kod
+  to `shape_*.k65`; dane (`*_data.k65`) generuje `python3 tools/gen_shapes.py`
 - `util.k65` – m.in. `FxStart`/`FxUpdate`/`FxFadeLevel`: przycisk + fade in/out
 - `main.k65`, `_defs.k65`, `_gamedefs.k65`, `util.k65`, `music/` – jak w szablonie
 - `docs/` – skrócona wiedza o K65 i Atari 2600 (kontekst dla AI), `CLAUDE.md` – punkt wejścia dla AI
