@@ -49,7 +49,7 @@ main {
         // rainbow            // effect in the same bank: plain call (currently disabled)
         // far plasma         // effect in another bank: far call (currently disabled)
         far sphere
-        far eqsine
+        // far eqsine         // (currently disabled)
     } always
 }
 ```
@@ -104,7 +104,7 @@ Update the map comment when you claim new addresses - `var` does not allocate an
 `music/music_player_mini.k65` plays `music/song_mini_sv18.k65` (4 sequences over 2 TIA channels).
 `song_player` is called once per frame (`far` from effects in other banks; it lives in bank "core").
 Bank map: core main + music, bank1 sphere dot engine (live shapes + logos), bank2 live-shape rotation
-(+ plasma), bank3 eqsine,
+(+ plasma), bank3 eqsine (disabled in main.k65 = empty),
 bank4 sphere kernel, bank5 sphere data, bank6 + bank7 free.
 Song loops at sequence 102 (`song_seq_wrap`). `seqbrk=a=0xFF` = the effect never ends.
 The player also stores what it writes to AUDVx/AUDFx/AUDCx into `mus_v0/f0/c0/v1/f1/c1` - use them for

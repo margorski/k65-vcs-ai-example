@@ -3,8 +3,9 @@
 Atari 2600 (VCS) demo written in **K65** - a custom 6502 assembler with its own, very
 non-standard syntax (`a=5 cbg=a`, `{ ... }!=` loops, `x?10 >={ }` conditions).
 Do not write DASM/ca65 syntax here. Target: **PAL**, 312 lines/frame, 32K F4 ROM.
-Effects (FIRE or SELECT switches, with fade out/in). **Currently only eqsine is enabled** -
-rainbow and plasma are commented out in `main.k65` (code kept, the linker drops unreferenced sections):
+Effects (FIRE or SELECT switches, with fade out/in). **Currently only the sphere is enabled** -
+rainbow, plasma and eqsine are commented out in `main.k65` (code kept and still compiled from files.lst,
+the linker drops unreferenced sections, so they take no ROM):
 - `effects/rainbow.k65` (bank core) - scrolling, sine-wobbled rainbow background
 - `effects/plasma.k65` (bank bank2) - 7x113 sum-of-sines plasma raced with mid-line COLUBK writes
 - `effects/eqsine.k65` (bank bank3) - music-reactive double helix: 32 orbs from 2 multiplexed sprites;
@@ -27,17 +28,20 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   quarter-square multiplies above the picture, 3 vertices kept in RAM E4-E5/EC-EF, the rest derived per point
   phase); points = vertex pairs (midpoints / quarter points). Live shapes are split BY JOB, one copy of each table:
   bank2 = rotation (LvSin/LvSinG/LvSinD/LvSq + `call lv_mul` + *_setup2, once per frame), bank1 = dot engine
-  (*_proc1: vertices in RAM -> band slots, point lists, logos). Only the placement tables (SphScale, SphLineBand,
+  (ONE point routine lv_proc1 / lv_body for all live shapes, driven by data: one point list LvPairA/B with
+  shared vertex ids 0..2 rotated, 3..5 derived by the shape's prep, 8..11 negated on fetch; sp_i starts at
+  the shape's entry SphI0; + logos). New live shape = *_setup + optional prep + a point list in gen_sphere.py.
+  sph_place has a fast path: one test skips the implosion/explosion code outside transitions. Only the placement tables (SphScale, SphLineBand,
   SphCand*, SphLineCand) exist twice - bank1 + bank5 at the same fixed addresses FC00-FFC4 (sph_place is shared).
   Transitions: implosion (into calm moods) / explosion (into energetic ones).
   Logos (bank1, dot engine): Altair (first verse, grey) and Atari (from song sequence SPH_LOGO_SEQ = 44, red); flat,
   spun around Y at runtime (x = x0*cos via quarter squares), fed through the same sph_place.
   Banks: core = main + music, bank1 dot engine of the live shapes + logos, bank2 rotation of the live shapes
-  (+ plasma if re-enabled - check space), bank3 eqsine, bank4 sphere kernel, bank5 sphere data;
-  **bank6 and bank7 are free** (4 KB each). `make report` = free space per bank + copied sections.
+  (+ plasma if re-enabled - check space), bank4 sphere kernel, bank5 sphere data;
+  **bank3 (eqsine, disabled), bank6 and bank7 are free** (4 KB each). `make report` = free space per bank + copied sections.
   Far stub of sph_proc5 is pinned in system_a2600.nut (FIXED_STUBS) at FFC5.
   A bank's code needs CONTIGUOUS free blocks - place big tables at fixed addresses to keep blocks whole.
-Enabled in main.k65: sphere -> eqsine.
+Enabled in main.k65: sphere only (FIRE restarts it).
 
 ## Knowledge base - read before editing K65 code
 

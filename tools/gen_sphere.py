@@ -68,22 +68,29 @@ DIA_GIRDLE = [(1, 2), (2, 4), (4, 5), (5, 1)]
 DIA_SLANT = [(t, g) for t in (0, 3) for g in (1, 2, 4, 5)]
 DIA_AMP, DIA_AMP_G = 63, 39     # sin/cos amplitude (unit), girdle 0.62 x unit
 CUB_AMP_G = round(DIA_AMP * S3)  # 1/sqrt(3) x unit (cube, pyramid)
-DIA_ZP = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6, 0xD8)  # RAM of T U W -T -U -W (x, y byte), sphere_defs.k65
-PYR_ZP = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6)        # apex, +P, +Q, -P, -Q
-CUB_ZP = (0xE4, 0xEC, 0xEE, 0xF4) * 2          # A B C D, then the opposites (negated while fetching)
+# vertex ids of the shared point routine (lv_body, sphere_defs.k65) -> RAM of (x byte, y byte):
+# 0..2 rotated vertices, 3..5 derived per phase (prep), 8..11 = ids 0..3 negated while fetching.
+# LvZp stores RAM - 0x80 for plain ids and the RAM itself (bit 7 set) for negated ones: the load
+# sets the negate flag (lv_fetch).
+LV_RAM = (0xE4, 0xEC, 0xEE, 0xF4, 0xF6, 0xD8)
+LV_ZP = tuple(r - 0x80 for r in LV_RAM) + (0, 0) + LV_RAM[:4]
+CUB_IDS = (0, 1, 2, 3, 8, 9, 10, 11)    # A B C D (D = prep), -A -B -C -D (negated while fetching)
+PYR_IDS = (0, 1, 2, 3, 4)               # apex, +P, +Q, -P, -Q (-P, -Q = prep)
+DIA_IDS = (0, 1, 2, 3, 4, 5)            # T U W, -T -U -W (prep)
 
 # "G" sin tables of the live shapes (sin x a shape factor): label -> amplitude
 G_TABLES = {"LvSinG": CUB_AMP_G, "LvSinD": DIA_AMP_G}
 
-# live shapes: name, vertices (reference only), points, vertex RAM, code prefix
+# live shapes (sp_shape 1, 2, 3 in this order): name, vertices (reference only), points,
+# shape vertex index -> lv_body vertex id, code prefix
 SHAPES = [
-    ("cube", CUBE_V, verts_and_mids(8, CUBE_E), CUB_ZP, "cub"),
+    ("cube", CUBE_V, verts_and_mids(8, CUBE_E), CUB_IDS, "cub"),
     ("pyramid", PYR_V, verts_and_mids(5, PYR_BASE)                     # slant edge: midpoint,
         + [p for a, b in PYR_SLANT for p in ((a, b, 0), (a, b, 1), (b, a, 1))],  #  1/4 from each end
-        PYR_ZP, "pyr"),
+        PYR_IDS, "pyr"),
     ("diamond", DIA_V, verts_and_mids(6, DIA_GIRDLE)
         + [p for t, g in DIA_SLANT for p in ((t, g, 0), (g, t, 1))],  # + 1/4 from the girdle to the tip
-        DIA_ZP, "dia"),
+        DIA_IDS, "dia"),
 ]
 
 # slot k = object: 0 P0, 1 P1, 2 M0, 3 M1, 4 BL - draws its dot on band line DOT0+k.
@@ -204,8 +211,7 @@ def main():
     print(f"\n// === bank{ENGINE_BANK}: dot engine of the live shapes + logos ===")
     print(f"bank bank{ENGINE_BANK};\n")
     emit_tables(ENGINE_BANK, *tables)
-    for i, shape in enumerate(SHAPES):
-        emit_live(*shape, first=i == 0)
+    emit_live()
 
 
 def emit_rot():
@@ -227,37 +233,45 @@ def emit_rot():
               f"\n    {prefix}_setup\n}}")
 
 
-def emit_live(name, verts, pairs, zp, prefix, first):
-    """Live vertex shape: no animation frames, the 6502 rotates it ({prefix}_setup in ROT_BANK,
-    {prefix}_body here in ENGINE_BANK, both in sphere_defs.k65). Point list = vertex ids:
-    ShpPairA = id, ShpPairB = id / 0x80 lone vertex / 0x40 quarter point (= the previous point,
-    the midpoint of the same edge, averaged with vertex A once more) / id | 0x20 quarter point
-    computed from scratch (pyr_body only). The first shape keeps the placement tables linked."""
+def point_list(pairs, ids):
+    """(a, b, quarter) points -> LvPairA / LvPairB entries (see lv_body in sphere_defs.k65)"""
     pa, pb = [], []
     for i, (a, b, q) in enumerate(pairs):
-        pa.append(a)
+        pa.append(ids[a])
         if not q:
-            pb.append(0x80 if a == b else b)
+            pb.append(0x80 if a == b else ids[b])               # lone vertex / edge midpoint
         elif i and set(pairs[i - 1][:2]) == {a, b} and not pairs[i - 1][2]:
-            pb.append(0x40)
+            pb.append(0x40)                                     # quarter point after its midpoint
         else:
-            assert prefix == "pyr"
-            pb.append(0x20 | b)
-    pa.append(0xFF)
-    pb.append(0xFF)
-    pre = prefix.capitalize()
-    bank = ENGINE_BANK
-    print(f"\n// {name}: {len(pairs)} drawn points, rotation computed at runtime ({prefix}_setup{ROT_BANK})")
-    assert len(pairs) < 64
-    print(f"data {pre}PairA {{\n{rows(pa)}\n}}")
-    print(f"data {pre}PairB {{\n{rows(pb)}\n}}")
-    print(f"data {pre}Zp {{ {' '.join(str(z) for z in zp)} }}   // vertex id -> its RAM (x byte, y byte)")
+            pb.append(0x20 | ids[b])                            # quarter point from scratch
+    return pa + [0xFF], pb + [0xFF]
+
+
+def emit_live():
+    """Live vertex shapes in the dot engine bank: one point list for all of them (each ended by
+    0xFF, SPH_I0_<SHAPE> = its first entry: sp_i starts there), the vertex RAM table and the ONE
+    point routine lv_proc (lv_body in sphere_defs.k65). Rotation: {prefix}_setup in ROT_BANK."""
+    pa, pb, starts = [], [], []
+    for name, verts, pairs, ids, prefix in SHAPES:
+        assert all(v < 0x20 for v in ids)
+        starts.append((name, len(pa), len(pairs)))
+        a, b = point_list(pairs, ids)
+        pa += a
+        pb += b
+    assert len(pa) <= 256
+    print()
+    for name, start, n in starts:
+        print(f"// {name}: {n} drawn points from entry {start}")
+    print("[ " + ", ".join(f"SPH_I0_{name.upper()} = {start}" for name, start, _ in starts) + " ]")
+    print(f"data LvPairA {{\n{rows(pa)}\n}}")
+    print(f"data LvPairB {{\n{rows(pb)}\n}}")
+    print(f"data LvZp {{ {' '.join(str(z) for z in LV_ZP)} }}   // vertex id -> RAM - 0x80 / RAM = negated")
     # the placement tables are read through fixed-address vars (sph_place is shared with the
     # sphere's bank), so reference their labels once or the linker drops them as unused
-    refs = " ".join(f"a={n}{bank}" for n in ("SphScale", "SphLineBand", "SphCandBase", "SphCandOff",
-                                             "SphLineCand")) if first else ""
-    never = f"\n    never {{ {refs} }}" if refs else ""
-    print(f"func {prefix}_proc{bank} {{{never}\n    {prefix}_body\n}}")
+    refs = " ".join(f"a={n}{ENGINE_BANK}" for n in ("SphScale", "SphLineBand", "SphCandBase", "SphCandOff",
+                                                    "SphLineCand"))
+    print(f"func lv_proc{ENGINE_BANK} {{                  // cube, pyramid, diamond: points -> band slots"
+          f"\n    never {{ {refs} }}\n    lv_body\n}}")
 
 
 # Atari "Fuji" logo, flat (z = 0), spinning around the vertical axis at runtime (ENGINE_BANK):

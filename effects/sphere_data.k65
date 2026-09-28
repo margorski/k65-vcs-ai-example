@@ -304,47 +304,28 @@ data SphLineCand1 {
     0 6 12 18 24
 }
 
-// cube: 20 drawn points, rotation computed at runtime (cub_setup2)
-data CubPairA {
-    0 1 2 3 4 5 6 7 0 0 0 1 1 2 2 3
-    3 4 4 4 255
+// cube: 20 drawn points from entry 0
+// pyramid: 21 drawn points from entry 21
+// diamond: 26 drawn points from entry 43
+[ SPH_I0_CUBE = 0, SPH_I0_PYRAMID = 21, SPH_I0_DIAMOND = 43 ]
+data LvPairA {
+    0 1 2 3 8 9 10 11 0 0 0 1 1 2 2 3
+    3 8 8 8 255 0 1 2 3 4 1 2 3 4 0 0
+    1 0 0 2 0 0 3 0 0 4 255 0 1 2 3 4
+    5 1 2 4 5 0 1 0 2 0 4 0 5 3 1 3
+    2 3 4 3 5 255
 }
-data CubPairB {
-    128 128 128 128 128 128 128 128 1 2 3 6 7 5 7 5
-    6 5 6 7 255
+data LvPairB {
+    128 128 128 128 128 128 128 128 1 2 3 10 11 9 11 9
+    10 9 10 11 255 128 128 128 128 128 2 3 4 1 1 64
+    32 2 64 32 3 64 32 4 64 32 255 128 128 128 128 128
+    128 2 4 5 1 1 64 2 64 4 64 5 64 1 64 2
+    64 4 64 5 64 255
 }
-data CubZp { 228 236 238 244 228 236 238 244 }   // vertex id -> its RAM (x byte, y byte)
-func cub_proc1 {
+data LvZp { 100 108 110 116 118 88 0 0 228 236 238 244 }   // vertex id -> RAM - 0x80 / RAM = negated
+func lv_proc1 {                  // cube, pyramid, diamond: points -> band slots
     never { a=SphScale1 a=SphLineBand1 a=SphCandBase1 a=SphCandOff1 a=SphLineCand1 }
-    cub_body
-}
-
-// pyramid: 21 drawn points, rotation computed at runtime (pyr_setup2)
-data PyrPairA {
-    0 1 2 3 4 1 2 3 4 0 0 1 0 0 2 0
-    0 3 0 0 4 255
-}
-data PyrPairB {
-    128 128 128 128 128 2 3 4 1 1 64 32 2 64 32 3
-    64 32 4 64 32 255
-}
-data PyrZp { 228 236 238 244 246 }   // vertex id -> its RAM (x byte, y byte)
-func pyr_proc1 {
-    pyr_body
-}
-
-// diamond: 26 drawn points, rotation computed at runtime (dia_setup2)
-data DiaPairA {
-    0 1 2 3 4 5 1 2 4 5 0 1 0 2 0 4
-    0 5 3 1 3 2 3 4 3 5 255
-}
-data DiaPairB {
-    128 128 128 128 128 128 2 4 5 1 1 64 2 64 4 64
-    5 64 1 64 2 64 4 64 5 64 255
-}
-data DiaZp { 228 236 238 244 246 216 }   // vertex id -> its RAM (x byte, y byte)
-func dia_proc1 {
-    dia_body
+    lv_body
 }
 
 // logos: Atari 28 points, Altair 26 points (from index 29), spin computed at runtime

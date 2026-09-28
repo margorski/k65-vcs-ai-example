@@ -69,6 +69,7 @@ var dia_cyg = 0xDD, dia_t = 0xDF;   //  the stack is 8 bytes deep there) + mus_f
 // free during the points: ptrA/ptrB after the music player, sp_colp until the end of vblank)
 var dia_ntx = 0xF4, dia_nty = 0xF5, dia_nux = 0xF6, dia_nuy = 0xF7, dia_nwx = 0xD8, dia_nwy = 0xD9;
 var zp0 = 0x00, zp1 = 0x01;         // base for zero page indexed reads (a=zp0,x = RAM at x)
+var zp80 = 0x80, zp81 = 0x81;       //  ... and for x = RAM - 0x80 (LvZp: bit 7 = negate flag)
 // Live pyramid and cube use the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
 // pyr_setup); -P / -Q go to dia_ntx.. like the diamond's opposite vertices. Its setup scratch:
 var pyr_hx = 0xE6, pyr_hy = 0xE7, pyr_hz = 0xCF, pyr_g = 0xD7;   // (ptrD, sp_i, sp_tmin: all free
@@ -140,11 +141,9 @@ data SphSongMode {
 //  Point routines - instantiated in the data banks by sphere_data.k65
 //  in:  ptrD = scale table, sp_i = next point, sp_tmin (+ ptrC, sp_flip for the sphere)
 // ---------------------------------------------------------------------------
-// Implosion: A = signed offset from the centre, scaled by 1 / 2^sp_sh (sp_sh 5 = 0).
+// Implosion (sp_sh > 0): A = signed offset from the centre, scaled by 1 / 2^sp_sh (5 = 0).
 inline sph_shrink {
-    x=sp_sh !={
-        x?5 >={ a=0 } else { { a?0x80 a>>> x-- }!= }         // arithmetic shift right
-    }
+    x=sp_sh x?5 >={ a=0 } else { { a?0x80 a>>> x-- }!= }     // arithmetic shift right
 }
 
 // Explosion: A = signed offset doubled sp_gr times. After every doubling the point must still
@@ -155,13 +154,14 @@ inline sph_shrink {
 
 // Scale + place one point: tmp3 = x byte (offset+64, bit 7 = far side), tmp4 = y byte.
 // Picks the band and the nearest free object slot, stores the positioning value.
+// Outside shape transitions (almost always) the implosion / explosion code is skipped with ONE
+// test: the transition path is out of line (.trans) and rejoins at .band. A transition is either
+// an implosion (sp_sh) or an explosion (sp_gr), never both (sph_music sets the other one to 0).
 inline sph_place {
-    a=tmp3 a&0x7F y=a a=(ptrD),y sph_shrink
-    x=sp_gr !={ { a<< tmp2=a c- a+[72] a?144 >={ goto .skip } a=tmp2 x-- }!= }   // explosion
-    c- a+[SPH_CX] tmp1=a                                      // screen x
-    y=tmp4 a=(ptrD),y sph_shrink
-    x=sp_gr !={ { a<< tmp2=a c- a+[82] a?165 >={ goto .skip } a=tmp2 x-- }!= }
-    c- a+[SPH_CY] y=a                                         // line in the dot area
+    a=sp_sh a|sp_gr !={ goto .trans }                        // shape transition running
+    a=tmp3 a&0x7F y=a a=(ptrD),y c- a+[SPH_CX] tmp1=a        // screen x
+    y=tmp4 a=(ptrD),y c- a+[SPH_CY] y=a                       // line in the dot area
+    .band:
     a=SphLineBand,y tmp2=a                                    // band
     a=tmp3 <0{                                                // candidate list: back points
         a=SphLineCand,y c- a+[SPH_BACKROWS] x=a               //  prefer P1/M1 (dim colour),
@@ -177,6 +177,20 @@ inline sph_place {
         }
         x++
     } always
+    goto .skip
+    .trans:
+    a=sp_gr !={ goto .explode }
+    a=tmp3 a&0x7F y=a a=(ptrD),y sph_shrink c- a+[SPH_CX] tmp1=a     // implosion
+    y=tmp4 a=(ptrD),y sph_shrink c- a+[SPH_CY] y=a
+    goto .band
+    .explode:
+    a=tmp3 a&0x7F y=a a=(ptrD),y
+    x=sp_gr { a<< tmp2=a c- a+[72] a?144 >={ goto .skip } a=tmp2 x-- }!=
+    c- a+[SPH_CX] tmp1=a                                      // screen x
+    y=tmp4 a=(ptrD),y
+    x=sp_gr { a<< tmp2=a c- a+[82] a?165 >={ goto .skip } a=tmp2 x-- }!=
+    c- a+[SPH_CY] y=a                                         // line in the dot area
+    goto .band
     .skip:
 }
 
@@ -284,43 +298,12 @@ inline dia_neg {
     a=dia_ux a^0xFF c- a+1 dia_nux=a a=dia_uy a^0xFF c- a+129 dia_nuy=a
     a=dia_wx a^0xFF c- a+1 dia_nwx=a a=dia_wy a^0xFF c- a+129 dia_nwy=a
 }
-// vertex id in Y (0..2 = T U W, 3..5 = -T -U -W) -> x byte, y byte (DiaZp = its RAM). Uses X.
-inline dia_fetch { x=DiaZp,y a=zp0,x tmp1=a a=zp1,x tmp2=a }    // -> tmp1, tmp2
-inline dia_fetch3 { x=DiaZp,y a=zp0,x tmp3=a a=zp1,x tmp4=a }   // -> tmp3, tmp4
-
 // tmp3/tmp4 = average of the point (tmp3/tmp4) and the vertex in tmp1/tmp2 (far only if both are)
 inline dia_avg {
     a=tmp2 c- a+tmp4 a>> tmp4=a
     a=tmp1 a&tmp3 a&0x80 tmp2=a
     a=tmp1 a&0x7F tmp1=a a=tmp3 a&0x7F c- a+tmp1 a>> a|tmp2 tmp3=a
 }
-
-// Point list = vertex ids: DiaPairA = vertex A, DiaPairB = vertex B (edge midpoint), 0x80 = lone
-// vertex, or 0x40 = quarter point: the PREVIOUS point (the midpoint of the same edge, still in
-// tmp3/tmp4 - sph_place only reads them) averaged with vertex A once more. When a phase starts
-// at a quarter point, that midpoint is rebuilt first (tmp3/tmp4 did not survive the break).
-inline dia_body {
-    x=sp_i y=DiaPairA,x <0{ goto .done }                        // (all points done)
-    dia_neg
-    a=DiaPairB,x a&0x40 =={ goto .loop }
-    x-- y=DiaPairA,x dia_fetch3 x=sp_i x-- y=DiaPairB,x dia_fetch dia_avg
-    .loop:
-    {
-        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=DiaPairA,x <0{ goto .done }                    // end of the point list
-        a=DiaPairB,x a&0x40 !={ dia_fetch goto .avg }           // quarter point
-        dia_fetch3                                              // vertex A
-        x=sp_i a=DiaPairB,x <0{ goto .place }                   // lone vertex
-        y=a dia_fetch                                           // edge midpoint: + vertex B
-        .avg:
-        dia_avg
-        .place:
-        sph_place
-        sp_i++
-    } always
-    .done:
-}
-
 
 // ---------------------------------------------------------------------------
 //  Live pyramid: apex T = column 1 of R, base centre h = -T/2, base corners
@@ -377,37 +360,6 @@ inline pyr_prep {
     a=[192] c+ a-tmp1 tmp1=a a=dia_wy a&0x80 a|tmp1 dia_nux=a
     a=dia_wy a&0x7F c- a+dia_ty tmp1=a a=[192] c+ a-tmp1 dia_nuy=a
 }
-// vertex id in Y (0 apex, 1 +P, 2 +Q, 3 -P, 4 -Q) -> x byte, y byte (bit 7 of the y byte masked)
-inline pyr_fetch { x=PyrZp,y a=zp0,x tmp1=a a=zp1,x a&0x7F tmp2=a }    // -> tmp1, tmp2
-inline pyr_fetch3 { x=PyrZp,y a=zp0,x tmp3=a a=zp1,x a&0x7F tmp4=a }   // -> tmp3, tmp4
-
-// Like dia_body, plus PyrPairB = B | 0x20: a quarter point that does not follow its midpoint
-// (the second quarter point of a slant edge): midpoint A-B, then averaged with A again.
-inline pyr_body {
-    x=sp_i y=PyrPairA,x <0{ goto .done }                        // (all points done)
-    pyr_prep
-    x=sp_i a=PyrPairB,x a&0x40 =={ goto .loop }
-    x-- y=PyrPairA,x pyr_fetch3 x=sp_i x-- y=PyrPairB,x pyr_fetch dia_avg
-    .loop:
-    {
-        a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=PyrPairA,x <0{ goto .done }                    // end of the point list
-        a=PyrPairB,x a&0x40 !={ pyr_fetch goto .avg }           // quarter point (after its midpoint)
-        pyr_fetch3                                              // vertex A
-        x=sp_i a=PyrPairB,x <0{ goto .place }                   // lone vertex
-        a&0x1F y=a pyr_fetch dia_avg                            // edge midpoint: + vertex B
-        x=sp_i a=PyrPairB,x a&0x20 =={ goto .place }
-        y=PyrPairA,x pyr_fetch                                  // quarter point: with A again
-        .avg:
-        dia_avg
-        .place:
-        sph_place
-        sp_i++
-    } always
-    .done:
-}
-
-
 // ---------------------------------------------------------------------------
 //  Live cube: vertices = G x (+-c0 +- c1 +- c2) with G = 1/sqrt(3) (the LvSinG
 //  table), c = the columns of R. Vertex ids: 0 A = (+,+,+), 1 B = (+,+,-), 2 C = (+,-,+),
@@ -456,32 +408,60 @@ inline cub_prep {
     a=dia_tx a&0x7F c+ a-tmp1 c- a+128 tmp1=a a=dia_ty a&0x80 a|tmp1 dia_ntx=a
     a=dia_uy c- a+dia_wy tmp1=a a=dia_ty a&0x7F c+ a-tmp1 c- a+128 dia_nty=a
 }
-// vertex id in Y (0..3 A B C D, 4..7 their opposites) -> x byte, y byte. Uses X.
-inline cub_fetch {                                      // -> tmp1, tmp2
-    x=CubZp,y a=zp1,x a&0x7F
-    y?4 >={ a^0xFF c- a+129 tmp2=a a=zp0,x a^0xFF c- a+1 }
-    else { tmp2=a a=zp0,x }
+
+
+// ---------------------------------------------------------------------------
+//  Live shapes: ONE point routine for all of them (dot engine bank), driven by data:
+//  - vertex ids (shared by all shapes, LvZp -> their RAM): 0..2 = the rotated vertices (E4 EC EE:
+//    T U W / apex +P +Q / A B C), 3..5 = derived per phase by the shape's prep (F4 F6 D8: diamond
+//    -T -U -W, pyramid -P -Q, cube D), 8..11 = ids 0..3 negated while fetching (cube -A..-D)
+//  - point list LvPairA/LvPairB (all shapes in one table, each ended by 0xFF; sp_i starts at the
+//    shape's first entry, SphI0): LvPairA = vertex A, LvPairB = B (edge midpoint A-B) / 0x80 lone
+//    vertex / 0x40 quarter point = the PREVIOUS point (the midpoint of the same edge, still in
+//    tmp3/tmp4 - sph_place only reads them) averaged with A once more / 0x20 | B = quarter point
+//    from scratch (midpoint A-B, then averaged with A again).
+//  When a phase starts at a 0x40 quarter point, its midpoint is rebuilt first (tmp3/tmp4 did not
+//  survive the break).
+//  A new live shape = a *_setup (rotation bank) writing vertices 0..2, optionally a prep for 3..5,
+//  and its point list in gen_sphere.py.
+// ---------------------------------------------------------------------------
+// vertex id in Y -> x byte, y byte (bit 7 of the y byte masked: the pyramid and the cube keep
+// far bits of derived vertices there). LvZp = the vertex RAM - 0x80, or the RAM itself (bit 7 set,
+// ids 8..11) = negate: x byte as a whole (-(64+x | far) = 64-x | the other side), y byte 128 - y.
+// The flag comes free with the load (no compare). Uses X, keeps Y.
+inline lv_fetch {                                       // -> tmp1, tmp2
+    x=LvZp,y <0{ a=zp1,x a&0x7F a^0xFF c- a+129 tmp2=a a=zp0,x a^0xFF c- a+1 }
+    else { a=zp81,x a&0x7F tmp2=a a=zp80,x }
     tmp1=a
 }
-inline cub_fetch3 {                                     // -> tmp3, tmp4
-    x=CubZp,y a=zp1,x a&0x7F
-    y?4 >={ a^0xFF c- a+129 tmp4=a a=zp0,x a^0xFF c- a+1 }
-    else { tmp4=a a=zp0,x }
+inline lv_fetch3 {                                      // -> tmp3, tmp4
+    x=LvZp,y <0{ a=zp1,x a&0x7F a^0xFF c- a+129 tmp4=a a=zp0,x a^0xFF c- a+1 }
+    else { a=zp81,x a&0x7F tmp4=a a=zp80,x }
     tmp3=a
 }
-// points: vertices (CubPairB = 0x80) and edge midpoints (CubPairB = vertex B)
-inline cub_body {
-    x=sp_i a=CubPairA,x <0{ goto .done }                        // (all points done)
-    cub_prep
+
+inline lv_body {
+    x=sp_i a=LvPairA,x <0{ goto .done }                         // (all points done)
+    a=sp_shape a?2 <{ cub_prep }                                // derived vertices 3..5
+    else { a?2 =={ pyr_prep } else { dia_neg } }
+    x=sp_i a=LvPairB,x a&0x40 =={ goto .loop }
+    x-- y=LvPairA,x lv_fetch3 x=sp_i x-- y=LvPairB,x lv_fetch dia_avg   // resume: rebuild the midpoint
+    .loop:
     {
         a=INTIM a?sp_tmin <{ goto .done }                       // not enough time left here
-        x=sp_i y=CubPairA,x <0{ goto .done }                    // end of the point list
-        cub_fetch3                                              // vertex A
-        x=sp_i a=CubPairB,x <0{ goto .place }                   // lone vertex
-        y=a cub_fetch dia_avg                                   // edge midpoint: + vertex B
+        x=sp_i y=LvPairA,x <0{ goto .done }                     // end of the point list
+        a=LvPairB,x <0{ lv_fetch3 goto .place }                 // lone vertex
+        a?0x20 >={ goto .quarter }                              // (quarter points: out of line)
+        lv_fetch3 x=sp_i y=LvPairB,x lv_fetch                   // edge midpoint: A + B
+        .avg:
+        dia_avg
         .place:
         sph_place
         sp_i++
     } always
+    .quarter:                                                   // A = LvPairB, Y = vertex A
+    a?0x40 >={ lv_fetch goto .avg }                             // after its midpoint: + A
+    lv_fetch3 x=sp_i a=LvPairB,x a&0x1F y=a lv_fetch dia_avg    // from scratch: midpoint A-B,
+    x=sp_i y=LvPairA,x lv_fetch goto .avg                       //  then with A again
     .done:
 }
