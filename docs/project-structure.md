@@ -105,14 +105,13 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0xF0-0xF3` song position (`songpos_seq/step/tick`, `seqbrk`), `0xF4-0xF7` `ptrA`, `ptrB`
 - `0xF8-0xFF` stack
 Update the map comment when you claim new addresses - `var` does not allocate anything.
+Owners and lifetimes (frame / phase / scratch) of every byte: `effect-conventions.md` section 3.
 
 ## Music
 
 `music/music_player_mini.k65` plays `music/song_mini_sv18.k65` (4 sequences over 2 TIA channels).
 `song_player` is called once per frame (`far` from effects in other banks; it lives in bank "core").
-Bank map: core main + music, bank1 shapes dot engine (live shapes + logos), bank2 live-shape rotation
-(+ plasma), bank3 eqsine (disabled in main.k65 = empty),
-bank4 shapes kernel, bank5 sphere, bank6 + bank7 free.
+Bank map, RAM contract, timing budget, naming: `effect-conventions.md`.
 Song loops at sequence 102 (`song_seq_wrap`). `seqbrk=a=0xFF` = the effect never ends.
 The player also stores what it writes to AUDVx/AUDFx/AUDCx into `mus_v0/f0/c0/v1/f1/c1` - use them for
 music-reactive effects.

@@ -2,7 +2,9 @@
 //
 //			x0		x1		x2		x3		x4		x5		x6		x7		x8		x9		xA		xB		xC		xD		xE		xF
 // 80-CF are per-effect (only one effect runs at a time):
-//   rainbow 80-84, plasma 88-9E, eqsine 80-CF (x0[16] x1[16] c0[16] c1[16] energy[16])
+//   rainbow 80-84, plasma 88-9E, eqsine 80-CF (x0[16] x1[16] c0[16] c1[16] energy[16]),
+//   shapes 80-CF (band slots 80-CA + state), D5-DB, DD/DF (scratch), E4-EF (effects/shapes/shape_defs.k65)
+// owners + lifetimes of every byte: docs/effect-conventions.md
 //	8x		rbph    rbwv    rbst    rbptr   rbptr   -       -       -       plptr   plptr   plptr   plptr   plptr   plptr   plptr   plptr
 //	9x		plptr   plptr   plptr   plptr   plptr   plptr   plp1    plp2    plt1    plt2    pltcol  plk1    plzoom  plcnt   plend   -
 //	Ax		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-		-			 

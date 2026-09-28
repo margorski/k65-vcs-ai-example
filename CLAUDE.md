@@ -56,6 +56,8 @@ Enabled in main.k65: shapes only (FIRE restarts it).
 - `docs/k65-language.md` - K65 syntax cheat sheet (verified against the compiler), gotchas, error behaviour
 - `docs/atari2600-vcs.md` - VCS hardware: timing, TIA/RIOT registers, PAL/NTSC colours, kernel tricks
 - `docs/project-structure.md` - files, build, demo/effect skeleton, RAM map, verification workflow
+- `docs/effect-conventions.md` - bank manifest, placing code/data across banks, RAM contract (owners +
+  lifetimes), timing budget, naming, checklists for a new effect / a new live shape - read before adding one
 
 Authoritative sources when in doubt: grammar `$K65_PATH/src/compiler.inc`, docs `$K65_PATH/doc/docs/`,
 examples `$K65_PATH/examples/a2600-tutorial-0*`, the user's demos in `../` (sv2019, sv2k21, jp-stream-demo),

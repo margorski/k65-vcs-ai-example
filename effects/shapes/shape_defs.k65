@@ -77,8 +77,7 @@ var shape_zp80 = 0x80, shape_zp81 = 0x81; //  ... and for x = RAM - 0x80 (ShapeZ
 // (bright, P0/M0/BL), [16..31] back (P1/M1). Luminance never below 2 (grey 0 would be black =
 // invisible); fade level 0 = 0 (with hue 0 = black). The kernel ORs the hue in (shape_hue).
 data ShapeLum {
-    address 0xF400          // fixed + page aligned: (shape_colp),y stays in the page; FA00-FBFF + the
-                            //  end of bank4 stay free for the far-call stubs
+    address 0xF400          // fixed + page aligned: (shape_colp),y stays in the page
     for x=0..511 eval [ flat = floor(x/256), lvl = floor((x%256)/32), b = x%16,
         back = flat ? 0 : floor(x/16)%2,
         lum = floor( (14 - b*10/14 - back*6) * lvl/7 ),
