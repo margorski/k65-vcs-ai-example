@@ -21,17 +21,20 @@ rainbow and plasma are commented out in `main.k65` (code kept, the linker drops 
   there, the 30 lines ABOVE run sph_music + the live rotation), overscan and vblank (adaptive: stops when
   the RIOT timer runs low, next phase continues) - measure the slack (see docs/project-structure.md) after changes.
   File order in files.lst matters: sphere_defs -> sphere_data -> sphere (far call to a later function crashes K65).
-  Shapes per mood (SphModeShape): calm cube, full pyramid (both bank2), breakdown diamond (bank1), build-up sphere
+  Shapes per mood (SphModeShape): calm cube, full pyramid, breakdown diamond, build-up sphere
   (bank5). Sphere = precomputed, packed by symmetry: 15 stored points (+ their opposites), 66 frames (frame f+66 =
   f with far bits flipped). Cube, pyramid and diamond are rotated LIVE (cub_/pyr_/dia_setup: rotation matrix by
   quarter-square multiplies above the picture, 3 vertices kept in RAM E4-E5/EC-EF, the rest derived per point
-  phase; banks 1 and 2 have the sin tables + the multiply routine at the same fixed address F000-F1E6, called as
-  `call LvMul`); points = vertex pairs (midpoints / quarter points).
+  phase); points = vertex pairs (midpoints / quarter points). Live shapes are split BY JOB, one copy of each table:
+  bank2 = rotation (LvSin/LvSinG/LvSinD/LvSq + `call lv_mul` + *_setup2, once per frame), bank1 = dot engine
+  (*_proc1: vertices in RAM -> band slots, point lists, logos). Only the placement tables (SphScale, SphLineBand,
+  SphCand*, SphLineCand) exist twice - bank1 + bank5 at the same fixed addresses FC00-FFC4 (sph_place is shared).
   Transitions: implosion (into calm moods) / explosion (into energetic ones).
-  Logos (bank1): Altair (first verse, grey) and Atari (from song sequence SPH_LOGO_SEQ = 44, red); flat,
+  Logos (bank1, dot engine): Altair (first verse, grey) and Atari (from song sequence SPH_LOGO_SEQ = 44, red); flat,
   spun around Y at runtime (x = x0*cos via quarter squares), fed through the same sph_place.
-  Banks: core = main + music, bank1 diamond + logos, bank2 cube + pyramid (+ plasma if re-enabled - check
-  space), bank3 eqsine, bank4 sphere kernel, bank5 sphere data; **bank6 and bank7 are free** (4 KB each).
+  Banks: core = main + music, bank1 dot engine of the live shapes + logos, bank2 rotation of the live shapes
+  (+ plasma if re-enabled - check space), bank3 eqsine, bank4 sphere kernel, bank5 sphere data;
+  **bank6 and bank7 are free** (4 KB each). `make report` = free space per bank + copied sections.
   Far stub of sph_proc5 is pinned in system_a2600.nut (FIXED_STUBS) at FFC5.
   A bank's code needs CONTIGUOUS free blocks - place big tables at fixed addresses to keep blocks whole.
 Enabled in main.k65: sphere -> eqsine.
@@ -54,6 +57,9 @@ template `../../k65-templates/atarivcs-demo-template`. If K65 syntax is unclear 
   `bin/frames.png` = rendered frames (background incl. mid-line COLUBK + players P0/P1) - look at it.
   Custom: `uv run --with py65 --with pillow tools/vcs_frame_check.py bin/demo.bin --frames N --press a,b --show x,y --png out.png`
 - `uv run --with py65 tools/song_analysis.py bin/demo.bin` - per-section audio features of the song
+- `make report` - bytes used/free per bank, largest free block, sections copied into several banks
+- `make stats` - ~35 s: CPU slack per phase (min/avg cycles polling the timer; 0 or overruns = too tight) and
+  stack depth over the whole sphere part, split by shape; `--stats/--sample/--group` of vcs_frame_check.py
 - `make clean`
 
 ## Rules

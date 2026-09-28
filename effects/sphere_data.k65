@@ -155,11 +155,11 @@ func sph_proc5 {
     sph_body
 }
 
-// cube: 20 drawn points, rotation computed at runtime (cub_setup)
+// === bank2: rotation of the live shapes (once per frame, above the picture) ===
 bank bank2;
 
-data LvSin2 {
-    address 0xF000
+// sin x 63, 165 entries: LvSin+33 = cos
+data LvSin {
     0 3 6 9 12 15 18 21 23 26 29 31 34 37 39 41
     43 46 48 50 51 53 55 56 57 58 60 60 61 62 62 63
     63 63 63 63 62 62 61 60 60 58 57 56 55 53 51 50
@@ -172,8 +172,8 @@ data LvSin2 {
     34 37 39 41 43 46 48 50 51 53 55 56 57 58 60 60
     61 62 62 63 63
 }
-data LvSinG2 {
-    address 0xF0A5
+// sin x 36 (0.57 of the unit)
+data LvSinG {
     0 2 3 5 7 8 10 12 13 15 16 18 19 21 22 24
     25 26 27 28 29 30 31 32 33 33 34 35 35 35 36 36
     36 36 36 36 36 35 35 35 34 33 33 32 31 30 29 28
@@ -186,154 +186,8 @@ data LvSinG2 {
     19 21 22 24 25 26 27 28 29 30 31 32 33 33 34 35
     35 35 36 36 36
 }
-data LvSq2 {
-    address 0xF14A
-    0 0 0 0 0 0 0 0 1 1 1 1 1 1 2 2
-    2 2 3 3 3 4 4 4 5 5 5 6 6 7 7 8
-    8 9 9 10 10 11 11 12 13 13 14 15 15 16 17 18
-    18 19 20 21 21 22 23 24 25 26 27 28 29 30 31 32
-    33 34 35 36 37 38 39 40 41 42 43 45 46 47 48 50
-    51 52 53 55 56 57 59 60 61 63 64 66 67 69 70 72
-    73 75 76 78 79 81 83 84 86 88 89 91 93 94 96 98
-    100 101 103 105 107 109 111 112 114 116 118 120 122 124 126
-}
-func lv_mul2 {
-    address 0xF1C9
-    dia_mul
-}   // = LvMul (call LvMul)
-data SphScale2 {
-    address 0xFC00
-    192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207
-    208 209 210 211 212 213 214 215 216 217 218 219 220 221 222 223
-    224 225 226 227 228 229 230 231 232 233 234 235 236 237 238 239
-    240 241 242 243 244 245 246 247 248 249 250 251 252 253 254 255
-    0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15
-    16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
-    32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47
-    48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63
-    188 189 190 191 192 193 194 195 196 197 198 199 200 201 202 204
-    205 206 207 208 209 210 211 212 213 214 215 216 217 219 220 221
-    222 223 224 225 226 227 228 229 230 231 232 234 235 236 237 238
-    239 240 241 242 243 244 245 246 247 249 250 251 252 253 254 255
-    0 1 2 3 4 5 6 7 9 10 11 12 13 14 15 16
-    17 18 19 20 21 22 24 25 26 27 28 29 30 31 32 33
-    34 35 36 37 39 40 41 42 43 44 45 46 47 48 49 50
-    51 52 54 55 56 57 58 59 60 61 62 63 64 65 66 67
-    183 184 185 186 188 189 190 191 192 193 194 196 197 198 199 200
-    201 202 204 205 206 207 208 209 210 212 213 214 215 216 217 218
-    220 221 222 223 224 225 226 228 229 230 231 232 233 234 235 237
-    238 239 240 241 242 243 245 246 247 248 249 250 251 253 254 255
-    0 1 2 3 5 6 7 8 9 10 11 13 14 15 16 17
-    18 19 21 22 23 24 25 26 27 28 30 31 32 33 34 35
-    36 38 39 40 41 42 43 44 46 47 48 49 50 51 52 54
-    55 56 57 58 59 60 62 63 64 65 66 67 68 70 71 72
-    179 180 182 183 184 185 186 188 189 190 191 192 194 195 196 197
-    198 200 201 202 203 204 206 207 208 209 210 212 213 214 215 216
-    218 219 220 221 222 224 225 226 227 228 230 231 232 233 234 236
-    237 238 239 240 242 243 244 245 246 248 249 250 251 252 254 255
-    0 1 2 4 5 6 7 8 10 11 12 13 14 16 17 18
-    19 20 22 23 24 25 26 28 29 30 31 32 34 35 36 37
-    38 40 41 42 43 44 46 47 48 49 50 52 53 54 55 56
-    58 59 60 61 62 64 65 66 67 68 70 71 72 73 74 76
-}
-data SphLineBand2 {
-    address 0xFE00
-    0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 1
-    1 1 1 1 1 1 1 1 1 2 2 2 2 2 2 2
-    2 2 2 2 3 3 3 3 3 3 3 3 3 3 3 4
-    4 4 4 4 4 4 4 4 4 4 5 5 5 5 5 5
-    5 5 5 5 5 6 6 6 6 6 6 6 6 6 6 6
-    7 7 7 7 7 7 7 7 7 7 7 8 8 8 8 8
-    8 8 8 8 8 8 9 9 9 9 9 9 9 9 9 9
-    9 10 10 10 10 10 10 10 10 10 10 10 11 11 11 11
-    11 11 11 11 11 11 11 12 12 12 12 12 12 12 12 12
-    12 12 13 13 13 13 13 13 13 13 13 13 13 14 14 14
-    14 14 14 14 14
-}
-data SphCandBase2 {
-    address 0xFEA8
-    0 30 60 15 45 255 0 30 60 15 45 255 30 0 60 15
-    45 255 30 60 0 45 15 255 60 30 0 45 15 255 15 45
-    0 30 60 255 15 45 0 30 60 255 15 45 30 0 60 255
-    45 15 30 60 0 255 45 15 60 30 0 255
-}
-data SphCandOff2 {
-    address 0xFEE4
-    15 255 255 15 255 0 15 255 255 15 255 0 255 15 255 15
-    255 0 255 255 15 255 15 0 255 255 15 255 15 0 15 255
-    15 255 255 0 15 255 15 255 255 0 15 255 255 15 255 0
-    255 15 255 255 15 0 255 15 255 255 15 0
-}
-data SphLineCand2 {
-    address 0xFF20
-    0 0 0 0 0 0 0 6 12 18 24 24 24 24 0 0
-    0 0 6 12 18 24 24 24 24 0 0 0 0 6 12 18
-    24 24 24 24 0 0 0 0 6 12 18 24 24 24 24 0
-    0 0 0 6 12 18 24 24 24 24 0 0 0 0 6 12
-    18 24 24 24 24 0 0 0 0 6 12 18 24 24 24 24
-    0 0 0 0 6 12 18 24 24 24 24 0 0 0 0 6
-    12 18 24 24 24 24 0 0 0 0 6 12 18 24 24 24
-    24 0 0 0 0 6 12 18 24 24 24 24 0 0 0 0
-    6 12 18 24 24 24 24 0 0 0 0 6 12 18 24 24
-    24 24 0 0 0 0 6 12 18 24 24 24 24 0 0 0
-    0 6 12 18 24
-}
-data CubPairA {
-    0 1 2 3 4 5 6 7 0 0 0 1 1 2 2 3
-    3 4 4 4 255
-}
-data CubPairB {
-    128 128 128 128 128 128 128 128 1 2 3 6 7 5 7 5
-    6 5 6 7 255
-}
-data CubZp { 228 236 238 244 228 236 238 244 }   // vertex id -> its RAM (x byte, y byte)
-func cub_setup2 {                  // rotate the vertices (top of the picture)
-    cub_setup
-}
-func cub_proc2 {
-    never { a=CubPairA a=CubPairB a=LvSin2 a=LvSinG2 a=LvSq2 a=lv_mul2 a=SphScale2 a=SphLineBand2 a=SphCandBase2 a=SphCandOff2 a=SphLineCand2 }
-    cub_body
-}
-
-// pyramid: 21 drawn points, rotation computed at runtime (pyr_setup)
-bank bank2;
-
-data PyrPairA {
-    0 1 2 3 4 1 2 3 4 0 0 1 0 0 2 0
-    0 3 0 0 4 255
-}
-data PyrPairB {
-    128 128 128 128 128 2 3 4 1 1 64 32 2 64 32 3
-    64 32 4 64 32 255
-}
-data PyrZp { 228 236 238 244 246 }   // vertex id -> its RAM (x byte, y byte)
-func pyr_setup2 {                  // rotate the vertices (top of the picture)
-    pyr_setup
-}
-func pyr_proc2 {
-    never { a=PyrPairA a=PyrPairB }
-    pyr_body
-}
-
-// diamond: 26 drawn points, rotation computed at runtime (dia_setup)
-bank bank1;
-
-data LvSin1 {
-    address 0xF000
-    0 3 6 9 12 15 18 21 23 26 29 31 34 37 39 41
-    43 46 48 50 51 53 55 56 57 58 60 60 61 62 62 63
-    63 63 63 63 62 62 61 60 60 58 57 56 55 53 51 50
-    48 46 43 41 39 37 34 31 29 26 23 21 18 15 12 9
-    6 3 0 253 250 247 244 241 238 235 233 230 227 225 222 219
-    217 215 213 210 208 206 205 203 201 200 199 198 196 196 195 194
-    194 193 193 193 193 193 194 194 195 196 196 198 199 200 201 203
-    205 206 208 210 213 215 217 219 222 225 227 230 233 235 238 241
-    244 247 250 253 0 3 6 9 12 15 18 21 23 26 29 32
-    34 37 39 41 43 46 48 50 51 53 55 56 57 58 60 60
-    61 62 62 63 63
-}
-data LvSinG1 {
-    address 0xF0A5
+// sin x 39 (0.62 of the unit)
+data LvSinD {
     0 2 4 6 7 9 11 13 14 16 18 19 21 23 24 26
     27 28 29 31 32 33 34 35 35 36 37 37 38 38 39 39
     39 39 39 39 39 38 38 37 37 36 35 35 34 33 32 31
@@ -346,8 +200,7 @@ data LvSinG1 {
     21 23 24 26 27 28 29 31 32 33 34 35 35 36 37 37
     38 38 39 39 39
 }
-data LvSq1 {
-    address 0xF14A
+data LvSq {
     0 0 0 0 0 0 0 0 1 1 1 1 1 1 2 2
     2 2 3 3 3 4 4 4 5 5 5 6 6 7 7 8
     8 9 9 10 10 11 11 12 13 13 14 15 15 16 17 18
@@ -357,10 +210,22 @@ data LvSq1 {
     73 75 76 78 79 81 83 84 86 88 89 91 93 94 96 98
     100 101 103 105 107 109 111 112 114 116 118 120 122 124 126
 }
-func lv_mul1 {
-    address 0xF1C9
+func lv_mul {                    // A = tmp1 * tmp2 * 2/63
     dia_mul
-}   // = LvMul (call LvMul)
+}
+func cub_setup2 {                  // cube: rotate the vertices (top of the picture)
+    cub_setup
+}
+func pyr_setup2 {                  // pyramid: rotate the vertices (top of the picture)
+    pyr_setup
+}
+func dia_setup2 {                  // diamond: rotate the vertices (top of the picture)
+    dia_setup
+}
+
+// === bank1: dot engine of the live shapes + logos ===
+bank bank1;
+
 data SphScale1 {
     address 0xFC00
     192 193 194 195 196 197 198 199 200 201 202 203 204 205 206 207
@@ -438,6 +303,37 @@ data SphLineCand1 {
     24 24 0 0 0 0 6 12 18 24 24 24 24 0 0 0
     0 6 12 18 24
 }
+
+// cube: 20 drawn points, rotation computed at runtime (cub_setup2)
+data CubPairA {
+    0 1 2 3 4 5 6 7 0 0 0 1 1 2 2 3
+    3 4 4 4 255
+}
+data CubPairB {
+    128 128 128 128 128 128 128 128 1 2 3 6 7 5 7 5
+    6 5 6 7 255
+}
+data CubZp { 228 236 238 244 228 236 238 244 }   // vertex id -> its RAM (x byte, y byte)
+func cub_proc1 {
+    never { a=SphScale1 a=SphLineBand1 a=SphCandBase1 a=SphCandOff1 a=SphLineCand1 }
+    cub_body
+}
+
+// pyramid: 21 drawn points, rotation computed at runtime (pyr_setup2)
+data PyrPairA {
+    0 1 2 3 4 1 2 3 4 0 0 1 0 0 2 0
+    0 3 0 0 4 255
+}
+data PyrPairB {
+    128 128 128 128 128 2 3 4 1 1 64 32 2 64 32 3
+    64 32 4 64 32 255
+}
+data PyrZp { 228 236 238 244 246 }   // vertex id -> its RAM (x byte, y byte)
+func pyr_proc1 {
+    pyr_body
+}
+
+// diamond: 26 drawn points, rotation computed at runtime (dia_setup2)
 data DiaPairA {
     0 1 2 3 4 5 1 2 4 5 0 1 0 2 0 4
     0 5 3 1 3 2 3 4 3 5 255
@@ -447,17 +343,11 @@ data DiaPairB {
     5 64 1 64 2 64 4 64 5 64 255
 }
 data DiaZp { 228 236 238 244 246 216 }   // vertex id -> its RAM (x byte, y byte)
-func dia_setup1 {                  // rotate the vertices (top of the picture)
-    dia_setup
-}
 func dia_proc1 {
-    never { a=DiaPairA a=DiaPairB a=LvSin1 a=LvSinG1 a=LvSq1 a=lv_mul1 a=SphScale1 a=SphLineBand1 a=SphCandBase1 a=SphCandOff1 a=SphLineCand1 }
     dia_body
 }
 
 // logos: Atari 28 points, Altair 26 points (from index 29), spin computed at runtime
-bank bank1;
-
 data LogoSq {
     0 0 0 0 0 0 0 0 0 0 0 0 1 1 1 1
     2 2 2 2 3 3 3 4 4 4 5 5 6 6 7 7

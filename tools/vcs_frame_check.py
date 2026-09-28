@@ -18,6 +18,11 @@ Usage (py65 is fetched on the fly by uv):
 
   --press N,M   hold FIRE for 3 frames starting at frames N, M (tests effect switching)
   --show a,b    frames rendered into the PNG (default: 4 evenly spaced frames)
+  --stats       CPU slack per frame phase (timwait polling time: overscan / vblank / picture),
+                deepest stack use, and the values of --sample RAM bytes at each picture start
+  --sample CF   RAM addresses (hex) sampled when the picture starts (VBLANK off), e.g. how many
+                points a time-sliced routine finished in the frame
+  --group DB    split the slack stats by the value of this RAM byte at picture start (e.g. a mode)
 """
 import argparse
 import sys
@@ -74,6 +79,17 @@ class VCS:
         self.frame = 0      # counted on VSYNC rising edges
         self.vsync = False
         self.pressed = set()  # frames with FIRE held
+        # --stats: timwait slack per phase, stack depth, RAM samples at picture start
+        self.pc = 0         # address of the instruction being executed
+        self.phase = "?"    # overscan / vblank / picture
+        self.phase_waits = 0
+        self.slack = {}     # phase label -> [slack cycles], negative = overrun
+        self.min_sp = 0xFF
+        self.min_sp_at = None
+        self.sample = []    # RAM addresses to sample
+        self.samples = []   # one tuple per picture start
+        self.group = None   # RAM address: slack stats split by its value
+        self.group_key = ""
 
     # --- py65 memory interface ---
     def __len__(self):
@@ -109,8 +125,41 @@ class VCS:
         if reg == 2:
             return 0x0B                         # SWCHB: colour, no switches
         if reg in (4, 6):
-            return self._intim()
+            value = self._intim()
+            self._timwait_read(value)
+            return value
         return 0
+
+    def _set_phase(self, phase):
+        self.phase, self.phase_waits, self.wait_start = phase, 0, None
+
+    def _underflowed(self):
+        return self.cycles() - self.timer_start > self.timer_value << self.timer_shift
+
+    def _is_timwait(self, pc):
+        """LDA INTIM (abs or zp) followed by BNE back to it = a timwait polling loop"""
+        rd = lambda a: self.rom[self.bank * 4096 + (a & 0xFFF)] if len(self.rom) > 2048 else self.rom[a & 0x7FF]
+        n = {0xAD: 3, 0xA5: 2}.get(rd(pc))
+        if not n or rd(pc + n) != 0xD0:
+            return False
+        off = rd(pc + n + 1)
+        return pc + n + 2 + (off - 256 if off & 0x80 else off) == pc
+
+    def _timwait_read(self, value):
+        """a timwait loop read the timer: its first read starts the wait, the 0 ends it"""
+        if not self._is_timwait(self.pc):
+            return
+        start = getattr(self, "wait_start", None)
+        if start is None or start[0] != self.pc:
+            start = (self.pc, self.cycles(), self._underflowed())
+            self.wait_start = start
+        if value == 0 or start[2]:                  # done (or started too late = overrun)
+            self.phase_waits += 1
+            label = self.phase + (str(self.phase_waits) if self.phase == "picture" else "") + self.group_key
+            slack = -1 if start[2] else self.cycles() - start[1]
+            if self.frame > 2:                      # skip the start-up frames
+                self.slack.setdefault(label, []).append(slack)
+            self.wait_start = None
 
     def __setitem__(self, addr, value):
         a = addr & 0x1FFF
@@ -126,7 +175,17 @@ class VCS:
                 if reg == 0x00:
                     if value & 2 and not self.vsync:
                         self.frame += 1
+                        self._set_phase("vblank")
                     self.vsync = bool(value & 2)
+                elif reg == 0x01:
+                    if value & 2:
+                        if self.phase == "picture":
+                            self._set_phase("overscan")
+                    elif self.phase != "picture":
+                        self._set_phase("picture")
+                        self.samples.append(tuple(self.ram[a & 0x7F] for a in self.sample))
+                        if self.group is not None:
+                            self.group_key = f" [{self.ram[self.group & 0x7F]}]"
             return
         if not a & 0x200:
             self.ram[a & 0x7F] = value
@@ -154,7 +213,10 @@ class VCS:
             pc = self.mpu.pc
             op = self.rom[(pc & 0x7FF) if len(self.rom) == 2048 else self.bank * 4096 + (pc & 0xFFF)]
             self.op_len = self.mpu.cycletime[op]
+            self.pc = pc
             self.mpu.step()
+            if self.mpu.sp < self.min_sp:
+                self.min_sp, self.min_sp_at = self.mpu.sp, (self.bank, pc, self.frame)
             self.op_len = 0
             if self.wsync:
                 self.wsync = False
@@ -310,12 +372,17 @@ def main():
     ap.add_argument("--show", help="comma separated frame numbers to render (default: 4 evenly spaced)")
     ap.add_argument("--press", default="", help="comma separated frames where FIRE is pressed (held 3 frames)")
     ap.add_argument("--expect", type=int, default=312, help="expected lines per frame (PAL 312, NTSC 262)")
+    ap.add_argument("--stats", action="store_true", help="CPU slack per phase, stack depth, RAM samples")
+    ap.add_argument("--sample", default="", help="comma separated RAM addresses (hex) sampled at picture start")
+    ap.add_argument("--group", help="RAM address (hex): split the slack stats by its value")
     args = ap.parse_args()
 
     rom = open(args.rom, "rb").read()
     vcs = VCS(rom)
     for f in filter(None, args.press.split(",")):
         vcs.pressed.update(range(int(f), int(f) + 3))
+    vcs.sample = [int(a, 16) for a in filter(None, args.sample.split(","))]
+    vcs.group = int(args.group, 16) if args.group else None
     vcs.run((args.frames + 2) * 330 * LINE_CYCLES)
     frames = analyse(vcs.events, vcs.mpu.processorCycles)[: args.frames]
     if not frames:
@@ -337,6 +404,23 @@ def main():
             print(f"{i:5}  {f['lines']:5}  {vsync:5}  {top!s:>11}  {vis!s:>7}  {bot!s:>16}{flag}")
     if not verbose:
         print(f"  ... {len(frames)} frames simulated, {len(frames) - bad} with {args.expect} lines, {bad} wrong")
+
+    if args.stats or vcs.sample or args.group:
+        print("\nCPU slack = cycles spent polling the timer at the end of a phase (frames 3+):")
+        print("  phase              waits    min    avg   overruns")
+        for label in sorted(vcs.slack):
+            v = vcs.slack[label]
+            ok = [x for x in v if x >= 0]
+            print(f"  {label:16} {len(v):7} {min(ok) if ok else '-':>6} {sum(ok) // max(len(ok), 1):>6} {len(v) - len(ok):>8}")
+        slot, pc, frame = vcs.min_sp_at or (0, 0, 0)
+        # K65 system_a2600.nut writes an 8-bank image as banks 4 5 2 3 0 1 6 7 (F4 hotspot order)
+        bank = [4, 5, 2, 3, 0, 1, 6, 7][slot] if len(rom) == 32768 else slot
+        print(f"deepest stack: SP = ${vcs.min_sp:02X} ({0xFF - vcs.min_sp} bytes used)"
+              f" at ${pc:04X} in bank {bank}, frame {frame}")
+        from collections import Counter
+        for k, a in enumerate(vcs.sample):
+            c = Counter(s[k] for s in vcs.samples[3:])
+            print(f"RAM ${a:02X} at picture start: " + ", ".join(f"{v}: {n}x" for v, n in sorted(c.items())))
 
     if args.png:
         from PIL import Image

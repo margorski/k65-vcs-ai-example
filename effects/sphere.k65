@@ -31,7 +31,8 @@
 //  fades in ~16 frames); hat (AUDC 8 attack, ch0 or ch1) -> the sphere pulses
 //  bigger (4 scale steps up to 120%, ~0.3 s).
 //
-//  Bank4 (code, kernel), data banks: bank5 sphere, bank2 cube + pyramid, bank1 diamond + logos.
+//  Bank4 (code, kernel); bank5 sphere points; live shapes split by job: bank2 rotation (*_setup,
+//  once per frame), bank1 dot engine (*_proc: points -> band slots) + logos.
 // ============================================================================
 
 bank bank4;
@@ -100,10 +101,10 @@ inline sph_points {
     a>> c- a+&>SphScaleA ptrD+1=a
     a=tmp1 a>>> a>>> a&0x80 ptrD=a                  // (level&1)*128
     a=sp_shape !={
-        a?2 <{ far cub_proc2 }                      // cube: bank2 (rotated live)
-        else { a?2 =={ far pyr_proc2 }              // pyramid: bank2 (rotated live)
-               else { a?3 =={ far dia_proc1 }       // diamond: bank1 (rotated live)
-                      else { far logo_proc1 } } }   // logos: bank1
+        a?2 <{ far cub_proc1 }                      // cube (dot engine, bank1)
+        else { a?2 =={ far pyr_proc1 }              // pyramid
+               else { a?3 =={ far dia_proc1 }       // diamond
+                      else { far logo_proc1 } } }   // logos
     } else {
         // sphere (bank5): 66 stored frames of 32 bytes, the second half turn = far bits flipped
         x=0 a=sp_frame a?[SPH_FRAMES/2] >={ c+ a-[SPH_FRAMES/2] x=0x80 }
@@ -196,7 +197,7 @@ func sphere {
             // (+ the live diamond's rotation), timed by the RIOT timer instead of counted lines
             TIM64T=a=[SPH_TOP_TIM]
             sph_music
-            a=sp_shape a?3 =={ far dia_setup1 }       // live shapes: rotate the vertices
+            a=sp_shape a?3 =={ far dia_setup2 }       // live shapes: rotate the vertices (bank2)
             else { a?2 =={ far pyr_setup2 } else { a?1 =={ far cub_setup2 } } }
             timwait wsync                       // = line SPH_TOP
             TIM64T=a=[SPH_BOT_TIM]              // re-armed for the rest of the picture: same end line,

@@ -50,6 +50,10 @@ data   name { ... }        // bytes (see 5)
 
 - Calling: writing the name of a func emits `JSR name`; of an inline pastes it.
   No parameters - pass via registers/RAM. `return` = RTS, `return_i` = RTI.
+  An inline that calls a func defined LATER in the source must write `call name` - the bare name
+  segfaults the compiler (no message). `call` also takes a `var` address (`call 0xF1C9`).
+- Label names are global across banks: the same `data`/`func` name in two banks segfaults the compiler.
+  Indexed access with an offset works: `a=LvSin+33,x` (cos from a sin table).
 - `far name` - call a func that lives in another bank (linker generates bankswitch stub).
   `far goto label` - far jump. Never put `far` inside an inline used from another bank.
 - `call addr` = raw `JSR addr`, `goto label` = JMP, `goto (ptr)` = JMP indirect.

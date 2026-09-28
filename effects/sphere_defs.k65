@@ -1,7 +1,8 @@
 // ============================================================================
 //  Sphere - shared definitions: constants, RAM, fixed table addresses, and the
-//  point routine bodies that sphere_data.k65 instantiates in the data banks
-//  (sphere: bank5, cube + pyramid: bank2, diamond + logos: bank1).
+//  routine bodies that sphere_data.k65 instantiates in the data banks:
+//  bank5 sphere (points), bank2 rotation of the live shapes (*_setup),
+//  bank1 dot engine of the live shapes + logos (*_proc).
 //  Must be compiled BEFORE sphere_data.k65, which must come BEFORE sphere.k65:
 //  K65 crashes on a `far` call to a function that is defined later.
 // ============================================================================
@@ -62,22 +63,22 @@ var sp_gr    = 0xEB;        // explosion level 0..4 (scale 2^level, points off-s
 var dia_tx = 0xE4, dia_ty = 0xE5;   // tip T = rotation matrix column 1 (= ptrC)
 var dia_ux = 0xEC, dia_uy = 0xED;   // girdle U = 0.62 x column 0 (EC = sp_lbase)
 var dia_wx = 0xEE, dia_wy = 0xEF;   // girdle W = 0.62 x column 2
-var dia_sy = 0xF4, dia_cy = 0xF5;   // setup scratch (ptrA; F6-F7 = stack while LvMul is called:
+var dia_sy = 0xF4, dia_cy = 0xF5;   // setup scratch (ptrA; F6-F7 = stack while lv_mul is called:
 var dia_cyg = 0xDD, dia_t = 0xDF;   //  the stack is 8 bytes deep there) + mus_f0/mus_f1 (not read here)
 // the opposite vertices -T -U -W, recomputed at the start of every point phase (scratch that is
 // free during the points: ptrA/ptrB after the music player, sp_colp until the end of vblank)
 var dia_ntx = 0xF4, dia_nty = 0xF5, dia_nux = 0xF6, dia_nuy = 0xF7, dia_nwx = 0xD8, dia_nwy = 0xD9;
 var zp0 = 0x00, zp1 = 0x01;         // base for zero page indexed reads (a=zp0,x = RAM at x)
-// Live pyramid and cube (bank2) use the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
+// Live pyramid and cube use the same 3 vertex slots: T = apex, U = corner +P, W = corner +Q (see
 // pyr_setup); -P / -Q go to dia_ntx.. like the diamond's opposite vertices. Its setup scratch:
 var pyr_hx = 0xE6, pyr_hy = 0xE7, pyr_hz = 0xCF, pyr_g = 0xD7;   // (ptrD, sp_i, sp_tmin: all free
                                                                 //  above the picture)
-// Live cube (bank2): A B C in the 3 vertex slots (see cub_setup), D = A - B - C per phase. Scratch:
+// Live cube: A B C in the 3 vertex slots (see cub_setup), D = A - B - C per phase. Scratch:
 var cub_c0 = 0xD7, cub_c1 = 0xE7, cub_c2 = 0xCF, cub_t2 = 0xE6;  // (free above the picture)
-// Trig + quarter-square tables of the live shapes: same fixed address in bank1 and bank2
-// (the "G" tables: 0.62 x 63 in bank1 - diamond, 1/sqrt(3) x 63 in bank2 - cube and pyramid)
-// (cos = sin 90 degrees = 33 entries later: one 165-entry table for both), LvMul = the multiply
-var LvSin = 0xF000, LvCos = 0xF021, LvSinG = 0xF0A5, LvCosG = 0xF0C6, LvSq = 0xF14A, LvMul = 0xF1C9;  // (gen_sphere.py ADDR_LV)
+// Trig + quarter-square tables of the live shapes: one copy, in the rotation bank (bank2, generated,
+// normal labels): LvSin = 63 x sin, "G" tables LvSinG = 1/sqrt(3) x 63 (cube, pyramid) and
+// LvSinD = 0.62 x 63 (diamond); cos = sin 90 degrees = 33 entries later (LvSin+33,y: one 165-entry
+// table for both); LvSq = quarter squares, lv_mul = the multiply subroutine.
 
 // Band colours (top -> bottom: light from above). One 256-byte page per song mood
 // (section mode, same as EQ Sine): CALM blue, FULL green, BREAK red, BUILD purple,
@@ -199,7 +200,7 @@ inline sph_body {
     .done:                                                      //  exits jump via goto)
 }
 
-// Logos (bank1): Atari (shape 4) and Altair (shape 5) point sets in the same tables, each
+// Logos (dot engine bank): Atari (shape 4) and Altair (shape 5) point sets in the same tables, each
 // ended by LogoY = 0xFF, sp_lbase = start index. Flat, spinning around the vertical axis.
 // A flat object has no per-point depth worth shading (at face-on every point is at depth 0,
 // the left/right halves would swap bright/dim instantly), so all points are "front" (stable
@@ -228,20 +229,21 @@ inline logo_body {
 
 
 // ---------------------------------------------------------------------------
-//  Live diamond (bank1): the rotation is computed on the 6502 every frame.
+//  Live diamond: the rotation is computed on the 6502 every frame (rotation bank: dia_setup,
+//  dot engine bank: dia_body).
 //  Same rotation as the precomputed shapes (tools/gen_sphere.py rotate(), turns X/Y/Z 1/2/1):
 //  R = Rz(a) * Ry(2a) * Rx(a), a = frame * 2pi/132. The diamond's vertices are
 //  +-T (tip, column 1 of R), +-U, +-W (girdle, 0.62 x columns 0 and 2):
 //      U = 0.62 * ( cy*cz,  cy*sz,  -sy )
 //      T = ( sx*sy*cz - cx*sz,  sx*sy*sz + cx*cz,  sx*cy )
 //      W = 0.62 * ( cx*sy*cz + sx*sz,  cx*sy*sz - sx*cz,  cx*cy )
-//  sin/cos tables have amplitude 63 (LvSinG/LvCosG: 0.62 x 63 = 39) and products use quarter
+//  sin/cos tables have amplitude 63 (LvSinD: 0.62 x 63 = 39) and products use quarter
 //  squares: sq(|a+b|) - sq(|a-b|) = 2ab/63 -> results in "double units" (126 = 1.0), which
 //  are exactly the screen scales: x px = v/4 (radius ~32), y lines = v/2 (radius 63).
 //  12 multiplies, ~1100 cycles per frame. Max error vs the float rotation: 1 px / 2 lines.
 // ---------------------------------------------------------------------------
 inline dia_mul {        // A = tmp1 * tmp2 * 2/63 (|tmp1|,|tmp2| <= 63), uses Y, tmp3
-                        //  (the body of the LvMul subroutine, one copy per bank: call LvMul)
+                        //  (the body of the lv_mul subroutine, in the rotation bank: call lv_mul)
     a=tmp1 c- a+tmp2 <0{ a^0xFF c- a+1 } y=a a=LvSq,y tmp3=a
     a=tmp1 c+ a-tmp2 <0{ a^0xFF c- a+1 } y=a a=tmp3 c+ a-LvSq,y
 }
@@ -253,26 +255,26 @@ inline dia_yb { dia_half a^0xFF c- a+65 }               // -> y byte: 64 - v/2 (
 inline dia_setup {
     a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
     else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
-    y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
+    y=a a=LvSin,y dia_sy=a a=LvSin+33,y dia_cy=a a=LvSinD+33,y dia_cyg=a
     x=sp_frame                                          // X and Z angle = frame (X stays = index)
     // U: x = cy*cz, y = cy*sz, far side when z = -sy < 0 (sy > 0)
-    a=dia_cyg tmp1=a a=LvCos,x tmp2=a call LvMul dia_xb tmp4=a
-    a=LvSin,x tmp2=a call LvMul dia_yb dia_uy=a
+    a=dia_cyg tmp1=a a=LvSin+33,x tmp2=a call lv_mul dia_xb tmp4=a
+    a=LvSin,x tmp2=a call lv_mul dia_yb dia_uy=a
     a=0 c+ a-dia_sy a&0x80 a|tmp4 dia_ux=a
     // T: t = sx*sy ; x = t*cz - cx*sz, y = t*sz + cx*cz, far when sx*cy < 0
-    a=LvSin,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a
-    tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvCos,x tmp1=a a=LvSin,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_xb tmp4=a
+    a=LvSin,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half dia_t=a
+    tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSin+33,x tmp1=a a=LvSin,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_xb tmp4=a
     a=LvSin,x a^dia_cy a&0x80 a|tmp4 dia_tx=a
-    a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvCos,x tmp1=a tmp2=a call LvMul c- a+tmp4 dia_ovf dia_yb dia_ty=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSin+33,x tmp1=a tmp2=a call lv_mul c- a+tmp4 dia_ovf dia_yb dia_ty=a
     // W: t = cx*sy (x 0.62) ; x = t*cz + sx*sz, y = t*sz - sx*cz (sx x 0.62), far when cx*cy < 0
-    a=LvCosG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a
-    tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call LvMul c- a+tmp4 dia_ovf dia_xb tmp4=a
-    a=LvCos,x a^dia_cy a&0x80 a|tmp4 dia_wx=a
-    a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvCos,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_yb dia_wy=a
+    a=LvSinD+33,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half dia_t=a
+    tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSinD,x tmp1=a a=LvSin,x tmp2=a call lv_mul c- a+tmp4 dia_ovf dia_xb tmp4=a
+    a=LvSin+33,x a^dia_cy a&0x80 a|tmp4 dia_wx=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSinD,x tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf dia_yb dia_wy=a
 }
 
 // Opposite vertex: the x byte negated as a whole (-(64+x | back) = 64-x | the other side),
@@ -321,8 +323,8 @@ inline dia_body {
 
 
 // ---------------------------------------------------------------------------
-//  Live pyramid (bank2): apex T = column 1 of R, base centre h = -T/2, base corners
-//  h +- (G0 + G2) = +-P and h +- (G0 - G2) = +-Q with G0/G2 = G x columns 0/2 (G = 1/sqrt(3): bank2's LvSinG/LvCosG,
+//  Live pyramid: apex T = column 1 of R, base centre h = -T/2, base corners
+//  h +- (G0 + G2) = +-P and h +- (G0 - G2) = +-Q with G0/G2 = G x columns 0/2 (G = 1/sqrt(3): LvSinG,
 //  shared with the cube)
 //  (pyramid: apex (0,1,0), corners (+-G, -0.5, +-G)). Not symmetric like the diamond,
 //  so the corners need their real z for the far-side bits: 14 multiplies (~1100 cycles).
@@ -332,36 +334,36 @@ inline dia_body {
 inline pyr_setup {
     a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
     else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
-    y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
+    y=a a=LvSin,y dia_sy=a a=LvSin+33,y dia_cy=a a=LvSinG+33,y dia_cyg=a
     a=LvSinG,y a<< a^0xFF c- a+1 pyr_g=a                 // G0 z = -G sy (double units)
     x=sp_frame                                          // X and Z angle = frame (X stays = index)
     // apex T (as the diamond's tip), h = -T/2
-    a=LvSin,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a
-    tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvCos,x tmp1=a a=LvSin,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf
+    a=LvSin,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half dia_t=a
+    tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSin+33,x tmp1=a a=LvSin,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 dia_ovf
     tmp4=a dia_half a^0xFF c- a+1 pyr_hx=a a=tmp4 dia_xb dia_tx=a
-    a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvCos,x tmp1=a tmp2=a call LvMul c- a+tmp4 dia_ovf
+    a=dia_t tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSin+33,x tmp1=a tmp2=a call lv_mul c- a+tmp4 dia_ovf
     tmp4=a dia_half a^0xFF c- a+1 pyr_hy=a a=tmp4 dia_yb dia_ty=a
-    a=LvSin,x tmp1=a a=dia_cy tmp2=a call LvMul             // z = sx*cy
+    a=LvSin,x tmp1=a a=dia_cy tmp2=a call lv_mul             // z = sx*cy
     tmp4=a dia_half a^0xFF c- a+1 pyr_hz=a a=tmp4 a&0x80 a|dia_tx dia_tx=a
     // corners, z first: far bits of +P/+Q -> their x bytes, of -P/-Q -> bit 7 of the y bytes
-    a=LvCosG,x tmp1=a a=dia_cy tmp2=a call LvMul tmp4=a     // G2 z = G cx*cy
+    a=LvSinG+33,x tmp1=a a=dia_cy tmp2=a call lv_mul tmp4=a     // G2 z = G cx*cy
     a=pyr_hz c- a+pyr_g c- a+tmp4 a&0x80 dia_ux=a        // +P = h + G0 + G2
     a=pyr_hz c+ a-pyr_g c+ a-tmp4 a&0x80 dia_uy=a        // -P = h - G0 - G2
     a=pyr_hz c- a+pyr_g c+ a-tmp4 a&0x80 dia_wx=a        // +Q = h + G0 - G2
     a=pyr_hz c+ a-pyr_g c- a+tmp4 a&0x80 dia_wy=a        // -Q = h - G0 + G2
-    a=LvCosG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a   // t2 = G cx*sy
+    a=LvSinG+33,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half dia_t=a   // t2 = G cx*sy
     // x: G0 = G cy*cz, G2 = t2*cz + G sx*sz
-    a=dia_cyg tmp1=a a=LvCos,x tmp2=a call LvMul pyr_g=a
-    a=dia_t tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call LvMul c- a+tmp4 tmp4=a
+    a=dia_cyg tmp1=a a=LvSin+33,x tmp2=a call lv_mul pyr_g=a
+    a=dia_t tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call lv_mul c- a+tmp4 tmp4=a
     a=pyr_g c+ a-tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_wx dia_wx=a
     a=pyr_g c- a+tmp4 c- a+pyr_hx dia_ovf dia_xb a|dia_ux dia_ux=a
     // y: G0 = G cy*sz, G2 = t2*sz - G sx*cz
-    a=dia_cyg tmp1=a a=LvSin,x tmp2=a call LvMul pyr_g=a
-    a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvCos,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 tmp4=a
+    a=dia_cyg tmp1=a a=LvSin,x tmp2=a call lv_mul pyr_g=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 tmp4=a
     a=pyr_g c+ a-tmp4 c- a+pyr_hy dia_ovf dia_yb a|dia_wy dia_wy=a
     a=pyr_g c- a+tmp4 c- a+pyr_hy dia_ovf dia_yb a|dia_uy dia_uy=a
 }
@@ -407,8 +409,8 @@ inline pyr_body {
 
 
 // ---------------------------------------------------------------------------
-//  Live cube (bank2): vertices = G x (+-c0 +- c1 +- c2) with G = 1/sqrt(3) (the bank's LvSinG/
-//  LvCosG tables), c = the columns of R. Vertex ids: 0 A = (+,+,+), 1 B = (+,+,-), 2 C = (+,-,+),
+//  Live cube: vertices = G x (+-c0 +- c1 +- c2) with G = 1/sqrt(3) (the LvSinG
+//  table), c = the columns of R. Vertex ids: 0 A = (+,+,+), 1 B = (+,+,-), 2 C = (+,-,+),
 //  3 D = (-,+,+), 4..7 = -A -B -C -D. Kept: A, B, C (their x bytes carry their own far bits, bit 7
 //  of A's y byte carries D's); D = A - B - C -> byte A - B - C + 128, per point phase; the
 //  opposite vertices are negated while fetching. 14 multiplies (~1100 cycles).
@@ -416,33 +418,33 @@ inline pyr_body {
 inline cub_setup {
     a=sp_frame a<< >={ c- a+[256-SPH_FRAMES] }            // Y angle = 2 x frame, wrapped to 0..131
     else { a?[SPH_FRAMES] >={ a-[SPH_FRAMES] } }
-    y=a a=LvSin,y dia_sy=a a=LvCos,y dia_cy=a a=LvCosG,y dia_cyg=a
+    y=a a=LvSin,y dia_sy=a a=LvSin+33,y dia_cy=a a=LvSinG+33,y dia_cyg=a
     a=LvSinG,y a<< a^0xFF c- a+1 cub_c0=a                // z of G c0 = -G sy (double units)
     x=sp_frame                                          // X and Z angle = frame (X stays = index)
-    a=LvSinG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half dia_t=a   // t1 = G sx*sy
-    a=LvCosG,x tmp1=a a=dia_sy tmp2=a call LvMul dia_half cub_t2=a  // t2 = G cx*sy
+    a=LvSinG,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half dia_t=a   // t1 = G sx*sy
+    a=LvSinG+33,x tmp1=a a=dia_sy tmp2=a call lv_mul dia_half cub_t2=a  // t2 = G cx*sy
     // z (far bits): c1 = G sx*cy, c2 = G cx*cy
-    a=LvSinG,x tmp1=a a=dia_cy tmp2=a call LvMul cub_c1=a
-    a=LvCosG,x tmp1=a a=dia_cy tmp2=a call LvMul cub_c2=a
+    a=LvSinG,x tmp1=a a=dia_cy tmp2=a call lv_mul cub_c1=a
+    a=LvSinG+33,x tmp1=a a=dia_cy tmp2=a call lv_mul cub_c2=a
     a=cub_c0 c- a+cub_c1 c- a+cub_c2 a&0x80 dia_tx=a     // A
     a=cub_c0 c- a+cub_c1 c+ a-cub_c2 a&0x80 dia_ux=a     // B
     a=cub_c0 c+ a-cub_c1 c- a+cub_c2 a&0x80 dia_wx=a     // C
     a=cub_c1 c- a+cub_c2 c+ a-cub_c0 a&0x80 dia_ty=a     // D (-> bit 7 of A's y byte)
     // x: c0 = G cy*cz, c1 = t1*cz - G cx*sz, c2 = t2*cz + G sx*sz
-    a=dia_cyg tmp1=a a=LvCos,x tmp2=a call LvMul cub_c0=a
-    a=dia_t tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvCosG,x tmp1=a a=LvSin,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 cub_c1=a
-    a=cub_t2 tmp1=a a=LvCos,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call LvMul c- a+tmp4 cub_c2=a
+    a=dia_cyg tmp1=a a=LvSin+33,x tmp2=a call lv_mul cub_c0=a
+    a=dia_t tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG+33,x tmp1=a a=LvSin,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 cub_c1=a
+    a=cub_t2 tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin,x tmp2=a call lv_mul c- a+tmp4 cub_c2=a
     a=cub_c0 c- a+cub_c1 c- a+cub_c2 dia_ovf dia_xb a|dia_tx dia_tx=a
     a=cub_c0 c- a+cub_c1 c+ a-cub_c2 dia_ovf dia_xb a|dia_ux dia_ux=a
     a=cub_c0 c+ a-cub_c1 c- a+cub_c2 dia_ovf dia_xb a|dia_wx dia_wx=a
     // y: c0 = G cy*sz, c1 = t1*sz + G cx*cz, c2 = t2*sz - G sx*cz
-    a=dia_cyg tmp1=a a=LvSin,x tmp2=a call LvMul cub_c0=a
-    a=dia_t tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvCosG,x tmp1=a a=LvCos,x tmp2=a call LvMul c- a+tmp4 cub_c1=a
-    a=cub_t2 tmp1=a a=LvSin,x tmp2=a call LvMul tmp4=a
-    a=LvSinG,x tmp1=a a=LvCos,x tmp2=a call LvMul tmp3=a a=tmp4 c+ a-tmp3 cub_c2=a
+    a=dia_cyg tmp1=a a=LvSin,x tmp2=a call lv_mul cub_c0=a
+    a=dia_t tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG+33,x tmp1=a a=LvSin+33,x tmp2=a call lv_mul c- a+tmp4 cub_c1=a
+    a=cub_t2 tmp1=a a=LvSin,x tmp2=a call lv_mul tmp4=a
+    a=LvSinG,x tmp1=a a=LvSin+33,x tmp2=a call lv_mul tmp3=a a=tmp4 c+ a-tmp3 cub_c2=a
     a=cub_c0 c- a+cub_c1 c- a+cub_c2 dia_ovf dia_yb a|dia_ty dia_ty=a
     a=cub_c0 c- a+cub_c1 c+ a-cub_c2 dia_ovf dia_yb dia_uy=a
     a=cub_c0 c+ a-cub_c1 c- a+cub_c2 dia_ovf dia_yb dia_wy=a

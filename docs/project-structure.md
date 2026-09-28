@@ -89,7 +89,7 @@ reads them through a pointer (`lda (ptr),y`), so a fade is only a change of the 
 - `0x80-0xCF`, `0xD5-0xDB`, `0xE8-0xEC` sphere (5 x 15 band positions + animation/music state);
   live pyramid/diamond: vertices in `0xE4-0xE5` (ptrC) + `0xEC-0xEF`, per-phase scratch `0xF4-0xF7` +
   `0xD8-0xD9`, rotation scratch above the picture `0xF4-0xF5`, `0xE6-0xE7`, `0xCF`, `0xD7`, `0xDD`,
-  `0xDF` (mus_f0/f1: the sphere does not read them); F6-F7 = stack during `call LvMul` (10 deep)
+  `0xDF` (mus_f0/f1: the sphere does not read them); F6-F7 = stack during `call lv_mul` (10 deep)
 - `0xDC-0xDF` `mus_v0 mus_f0 mus_v1 mus_f1`, `0xD3-0xD4` `mus_c0 mus_c1` - last AUDV/AUDF/AUDC
   values written by the music player (global, every frame)
 - `0xD5-0xDA` eqsine section state (`eq_mode eq_base eq_gain eq_kick eq_pv0 eq_pv1`)
@@ -103,7 +103,8 @@ Update the map comment when you claim new addresses - `var` does not allocate an
 
 `music/music_player_mini.k65` plays `music/song_mini_sv18.k65` (4 sequences over 2 TIA channels).
 `song_player` is called once per frame (`far` from effects in other banks; it lives in bank "core").
-Bank map: core main + music, bank1 diamond + logos, bank2 cube + pyramid (+ plasma), bank3 eqsine,
+Bank map: core main + music, bank1 sphere dot engine (live shapes + logos), bank2 live-shape rotation
+(+ plasma), bank3 eqsine,
 bank4 sphere kernel, bank5 sphere data, bank6 + bank7 free.
 Song loops at sequence 102 (`song_seq_wrap`). `seqbrk=a=0xFF` = the effect never ends.
 The player also stores what it writes to AUDVx/AUDFx/AUDCx into `mus_v0/f0/c0/v1/f1/c1` - use them for
@@ -137,4 +138,9 @@ Note the player uses `ptrA`/`ptrB` as scratch - re-set any effect pointers kept 
    To find CPU headroom, log the cycles of INTIM reads in the emulator: each polling run of `timwait`
    = the slack of that phase (overscan / vblank / picture). A run that starts after the timer hit 0
    means an overrun - and `timwait` can then miss the 0 and add 15-25 lines, so keep slack > ~100.
-5. The user runs `make run` for the real picture + sound.
+   Automated: `make stats` (vcs_frame_check.py `--stats`: min/avg slack per phase - picture1/2 = the
+   1st/2nd timer wait inside the picture -, overruns, deepest stack; `--group ADDR` splits by a RAM byte,
+   `--sample ADDR` histograms a RAM byte at every picture start).
+5. `make report` (tools/rom_report.py): per bank used/free/largest free block (a function needs ONE block)
+   and every section whose bytes appear in more than one bank (`--sections` lists all sections).
+6. The user runs `make run` for the real picture + sound.
