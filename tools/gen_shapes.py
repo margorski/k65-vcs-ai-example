@@ -10,7 +10,8 @@
 Sphere (bank5): rotating 30 points per point is too expensive for the 6502, so the rotation
 is baked into ROM - packed by symmetry: the point set is symmetric under p -> -p and under
 the 180-degree turn about X, so a frame stores one point of each opposite pair (15 x 2 bytes)
-and only half a turn (66 frames): frame f + 66 = frame f with the far bits flipped.
+and only half a turn (66 frames): frame f + 66 = frame f with the far bits flipped. Only the even
+frames 0, 2 .. 66 are stored (34 x 30 bytes); the 6502 averages two of them for an odd frame.
 Each point = (dx+64 | far bit 7, dy+64), dx in pixels, dy in scanlines.
 
 Vertex shapes (cube, pyramid, diamond) are rotated live on the 6502 (cube.k65, ...), split
@@ -30,7 +31,9 @@ import sys
 NPTS = 30                   # points on the sphere (must match SPHERE_NPTS)
 FRAME_BYTES = 30            # bytes per stored sphere frame - MUST stay 30 (sphere_frame: frame*30)
 FRAMES = 132                # animation frames per turn - must match SHAPE_FRAMES
-SPH_FRAMES_N = FRAMES // 2  # stored sphere frames (the second half turn = far bits flipped)
+SPH_FRAMES_N = FRAMES // 2  # sphere frames of a half turn (the second half turn = far bits flipped)
+SPH_STORED = SPH_FRAMES_N // 2 + 1  # stored: frames 0, 2, .. 66 (66 = 0 flipped, for frame 65);
+                                    #  odd frames = average of the two neighbours (sphere_fetch)
 SPH_BANK = "5"
 ROT_BANK = "2"              # rotation of the live shapes (tables + shape_mul + *_setup)
 ENGINE_BANK = "1"           # point routines of the live shapes + logos (+ placement tables)
@@ -128,10 +131,11 @@ def rows(values, per=16):
     return "\n".join(out)
 
 
-def frames_of(points, stride, nframes, per_turn=FRAMES):
-    """Rotated + projected points of animation frames 0..nframes-1, stride bytes per frame."""
+def frames_of(points, stride, nframes, per_turn=FRAMES, step=1):
+    """Rotated + projected points of animation frames 0, step, .. (nframes of them), stride bytes
+    per frame."""
     out = []
-    for f in range(nframes):
+    for f in range(0, nframes * step, step):
         t = 2 * math.pi * f / per_turn
         for p in points:
             x, y, z = rotate(p, t * TURNS[0], t * TURNS[1], t * TURNS[2])
@@ -174,7 +178,7 @@ def main():
     stored = sym_sphere()
     assert 2 * len(stored) == NPTS and 2 * len(stored) <= FRAME_BYTES
     check_sphere_symmetry(stored)
-    anim = frames_of(stored, FRAME_BYTES, SPH_FRAMES_N)
+    anim = frames_of(stored, FRAME_BYTES, SPH_STORED, step=2)
     assert len(anim) <= ADDR_SCALE - ADDR_ANIM
 
     scale = []
@@ -200,7 +204,8 @@ def main():
     assert ADDR_COFF + len(coff) <= ADDR_CAND and ADDR_CAND + NLINES <= 0xFFC5   # FFC5-: far-call stubs
     tables = (scale, line_band, cbase, coff, line_cand)
 
-    sphere = [f"// sphere: {NPTS} points ({len(stored)} stored), {SPH_FRAMES_N} of {FRAMES} frames stored;"
+    sphere = [f"// sphere: {NPTS} points ({len(stored)} stored), frames 0, 2 .. {2 * (SPH_STORED - 1)} of {FRAMES}"
+              f" stored ({SPH_STORED} x {FRAME_BYTES} bytes, odd frames interpolated);"
               f" turns X/Y/Z = {TURNS}, radius {RX} px / {RY} lines",
               f"bank bank{SPH_BANK};\n",
               f"data SphereAnim {{\n    address 0x{ADDR_ANIM:04X}\n{rows(anim, 32)}\n}}"]

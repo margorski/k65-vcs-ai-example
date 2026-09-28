@@ -30,8 +30,10 @@ the linker drops unreferenced sections, so they take no ROM):
   the RIOT timer runs low, next phase continues) - `make stats` after changes.
   File order in files.lst matters (K65 crashes on a far call to a later function, and an inline calling a later
   func needs `call`): shape_defs -> generated *_data -> shape_math, shape_place -> shapes -> shape_live -> shapes.k65.
-  Sphere = precomputed, packed by symmetry: 15 stored points (+ their opposites), 66 frames (frame f+66 = f with
-  far bits flipped). Cube, pyramid and diamond are rotated LIVE (cube_/pyramid_/diamond_setup in bank2: rotation
+  Sphere = precomputed, packed by symmetry: 15 stored points (+ their opposites), half a turn (frame f+66 = f with
+  far bits flipped), only the even frames 0..66 stored (34 x 30 B), odd frames = average of the two neighbours
+  (sphere_fetch; max error 1 px / 1 line); the opposite point = the previous point negated.
+  Cube, pyramid and diamond are rotated LIVE (cube_/pyramid_/diamond_setup in bank2: rotation
   matrix by quarter-square multiplies above the picture, vertices 0..2 kept in RAM shape_v0..v2 = E4-E5/EC-EF;
   shared subroutines in shape_math: shape_angles(_g), shape_col1; stack 12 deep there = F4-FF, the angles
   live in D3-D4 = mus_c0/c1 after shape_music read them).

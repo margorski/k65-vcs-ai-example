@@ -6,7 +6,7 @@ Rules for adding or changing an effect without breaking the others. Background: 
 ## 1. Bank manifest
 
 F4 cartridge: 8 banks of 4 KB, all mapped at F000-FFFF, **only one visible at a time**.
-Numbers from `make report` (commit ae733a3) - re-run it, they change with every edit.
+Numbers from `make report` (sphere interpolation commit) - re-run it, they change with every edit.
 
 | bank | contents | used | free (largest block) |
 |---|---|---|---|
@@ -14,8 +14,8 @@ Numbers from `make report` (commit ae733a3) - re-run it, they change with every 
 | bank1 | shapes: dot engine - `shape_live_points`, logos, point list, placement tables (FC00-FFC4) | 2730 | 1366 (1325) |
 | bank2 | shapes: rotation - `*_setup`, `shape_mul` + shared `shape_angles(_g)` / `shape_col1`, sin / square tables; plasma (disabled) | 1971 | 2125 (2115) |
 | bank3 | eqsine (disabled) | 19 | 4077 |
-| bank4 | shapes: effect + kernel (`shapes`), `ShapeLum` (F400-F5FF) | 1909 | 2187 (1227) |
-| bank5 | shapes: sphere - animation (F100), `sphere_points`, placement tables (FC00-FFC4) | 3274 | 822 (533) |
+| bank4 | shapes: effect + kernel (`shapes`), `ShapeLum` (F400-F5FF) | 1933 | 2163 (1203) |
+| bank5 | shapes: sphere - animation (F100, 34 even frames), `sphere_points`, placement tables (FC00-FFC4) | 2423 | 1673 (1384) |
 | bank6 | free | 19 | 4077 |
 | bank7 | free | 19 | 4077 |
 
@@ -40,8 +40,8 @@ is commented out in `main.k65` can stay in `files.lst` (it keeps compiling).
 - **A function must fit into ONE contiguous free block** (`make report`: largest free block). Put big
   tables at fixed addresses at the start or end of a bank so the free space stays in one piece.
 - **Reserved addresses:** FFC5-FFEC in bank5 (and the same range in bank4) for the pinned far stub of
-  `sphere_points` (`FIXED_STUBS` in `system_a2600.nut`: bank5 is nearly full, a stub placed by the
-  allocator could split its last free block); the hotspots FFF4-FFFB must never be read by accident
+  `sphere_points` (`FIXED_STUBS` in `system_a2600.nut`: a stub placed by the allocator could split
+  bank5's free space; it was nearly full when this was introduced); the hotspots FFF4-FFFB must never be read by accident
   (keep code away, use `nocross`). Other far stubs are placed by the linker at an address free in
   BOTH banks - keep some space free in every bank.
 - **File order in `files.lst`:** definitions (`var`, `[ ]` constants, inlines) before their users;
