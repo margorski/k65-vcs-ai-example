@@ -16,21 +16,14 @@ bank bank2;
 //  12 multiplies, ~1100 cycles per frame. Max error vs the float rotation: 1 px / 2 lines.
 // ---------------------------------------------------------------------------
 inline diamond_rotate {
-    a=shape_frame a<< >={ c- a+[256-SHAPE_FRAMES] }       // Y angle = 2 x frame, wrapped to 0..131
-    else { a?[SHAPE_FRAMES] >={ a-[SHAPE_FRAMES] } }
-    y=a a=ShapeSin,y shape_sy=a a=ShapeSin+33,y shape_cy=a a=DiamondSin+33,y shape_cyg=a
-    x=shape_frame                                       // X and Z angle = frame (X stays = index)
+    call shape_angles a=DiamondSin+33,y shape_cyg=a      // angles (X = frame from here on)
     // U: x = cy*cz, y = cy*sz, far side when z = -sy < 0 (sy > 0)
     a=shape_cyg tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul shape_xb tmp4=a
     a=ShapeSin,x tmp2=a call shape_mul shape_yb shape_v1y=a
     a=0 c+ a-shape_sy a&0x80 a|tmp4 shape_v1x=a
     // T: t = sx*sy ; x = t*cz - cx*sz, y = t*sz + cx*cz, far when sx*cy < 0
-    a=ShapeSin,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
-    tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
-    a=ShapeSin+33,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 shape_ovf shape_xb tmp4=a
-    a=ShapeSin,x a^shape_cy a&0x80 a|tmp4 shape_v0x=a
-    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
-    a=ShapeSin+33,x tmp1=a tmp2=a call shape_mul c- a+tmp4 shape_ovf shape_yb shape_v0y=a
+    call shape_col1 shape_yb shape_v0y=a
+    a=shape_v0x shape_xb tmp4=a a=ShapeSin,x a^shape_cy a&0x80 a|tmp4 shape_v0x=a
     // W: t = cx*sy (x 0.62) ; x = t*cz + sx*sz, y = t*sz - sx*cz (sx x 0.62), far when cx*cy < 0
     a=DiamondSin+33,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
     tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a

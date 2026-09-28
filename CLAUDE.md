@@ -32,7 +32,9 @@ the linker drops unreferenced sections, so they take no ROM):
   func needs `call`): shape_defs -> generated *_data -> shape_math, shape_place -> shapes -> shape_live -> shapes.k65.
   Sphere = precomputed, packed by symmetry: 15 stored points (+ their opposites), 66 frames (frame f+66 = f with
   far bits flipped). Cube, pyramid and diamond are rotated LIVE (cube_/pyramid_/diamond_setup in bank2: rotation
-  matrix by quarter-square multiplies above the picture, vertices 0..2 kept in RAM shape_v0..v2 = E4-E5/EC-EF).
+  matrix by quarter-square multiplies above the picture, vertices 0..2 kept in RAM shape_v0..v2 = E4-E5/EC-EF;
+  shared subroutines in shape_math: shape_angles(_g), shape_col1; stack 12 deep there = F4-FF, the angles
+  live in D3-D4 = mus_c0/c1 after shape_music read them).
   Their points come from ONE data-driven routine (shape_live_points, bank1): one point list ShapePairA/B (vertex
   pairs: midpoints / quarter points), shared vertex ids 0..2 rotated, 3..5 derived per phase by the shape's prep
   (cube_prep, pyramid_prep, diamond_prep), 8..11 negated on fetch (ShapeZp); shape_i starts at the shape's entry

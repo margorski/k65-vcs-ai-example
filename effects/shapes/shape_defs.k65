@@ -65,9 +65,11 @@ var shape_v0x = 0xE4, shape_v0y = 0xE5;     // (= ptrC)
 var shape_v1x = 0xEC, shape_v1y = 0xED;     // (EC = logo_base)
 var shape_v2x = 0xEE, shape_v2y = 0xEF;
 var shape_v3x = 0xF4, shape_v3y = 0xF5, shape_v4x = 0xF6, shape_v4y = 0xF7, shape_v5x = 0xD8, shape_v5y = 0xD9;
-// rotation scratch (*_setup, above the picture): ptrA (F6-F7 = stack while shape_mul is called: the
-// stack is 8 bytes deep there) + mus_f0/mus_f1 (not read here)
-var shape_sy = 0xF4, shape_cy = 0xF5, shape_cyg = 0xDD, shape_t = 0xDF;
+// rotation scratch (*_setup, above the picture): the player's mus_c0/c1 (read by shape_music BEFORE
+// the rotation, rewritten by the player in overscan) + mus_f0/f1 (not read here) + D7. F4-F7 are
+// stack there: shapes -> *_setup -> shape_col1 -> shape_mul = 12 bytes deep (F4-FF)
+var shape_sy = 0xD3, shape_cy = 0xD4, shape_cyg = 0xDD, shape_t = 0xDF;
+var shape_g0z = 0xD7;           // cube, pyramid: z of G x column 0 = -G sy (shape_angles_g)
 var shape_zp0 = 0x00, shape_zp1 = 0x01; // base for zero page indexed reads (a=shape_zp0,x = RAM at x)
 var shape_zp80 = 0x80, shape_zp81 = 0x81; //  ... and for x = RAM - 0x80 (ShapeZp: bit 7 = negate flag)
 

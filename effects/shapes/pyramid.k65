@@ -4,7 +4,8 @@
 
 bank bank2;
 
-// rotation scratch (ptrD, shape_i, shape_tmin: all free above the picture)
+// rotation scratch (ptrD, shape_i, shape_tmin: all free above the picture); pyramid_g = shape_g0z
+// (the z of G0 first, then G0 of x and y)
 var pyramid_hx = 0xE6, pyramid_hy = 0xE7, pyramid_hz = 0xCF, pyramid_g = 0xD7;
 
 // ---------------------------------------------------------------------------
@@ -17,27 +18,19 @@ var pyramid_hx = 0xE6, pyramid_hy = 0xE7, pyramid_hz = 0xCF, pyramid_g = 0xD7;
 //  +P / +Q y bytes (y bytes are 1..127). -P = 2h - P = -T - P -> byte 192 - T - P, per phase.
 // ---------------------------------------------------------------------------
 inline pyramid_rotate {
-    a=shape_frame a<< >={ c- a+[256-SHAPE_FRAMES] }       // Y angle = 2 x frame, wrapped to 0..131
-    else { a?[SHAPE_FRAMES] >={ a-[SHAPE_FRAMES] } }
-    y=a a=ShapeSin,y shape_sy=a a=ShapeSin+33,y shape_cy=a a=ShapeSinG+33,y shape_cyg=a
-    a=ShapeSinG,y a<< a^0xFF c- a+1 pyramid_g=a          // G0 z = -G sy (double units)
-    x=shape_frame                                       // X and Z angle = frame (X stays = index)
+    call shape_angles_g                                 // angles, G0 z (X = frame from here on)
     // apex T (as the diamond's tip), h = -T/2
-    a=ShapeSin,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
-    tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
-    a=ShapeSin+33,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 shape_ovf
-    tmp4=a shape_half a^0xFF c- a+1 pyramid_hx=a a=tmp4 shape_xb shape_v0x=a
-    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
-    a=ShapeSin+33,x tmp1=a tmp2=a call shape_mul c- a+tmp4 shape_ovf
+    call shape_col1
     tmp4=a shape_half a^0xFF c- a+1 pyramid_hy=a a=tmp4 shape_yb shape_v0y=a
+    a=shape_v0x tmp4=a shape_half a^0xFF c- a+1 pyramid_hx=a a=tmp4 shape_xb shape_v0x=a
     a=ShapeSin,x tmp1=a a=shape_cy tmp2=a call shape_mul     // z = sx*cy
     tmp4=a shape_half a^0xFF c- a+1 pyramid_hz=a a=tmp4 a&0x80 a|shape_v0x shape_v0x=a
     // corners, z first: far bits of +P/+Q -> their x bytes, of -P/-Q -> bit 7 of the y bytes
     a=ShapeSinG+33,x tmp1=a a=shape_cy tmp2=a call shape_mul tmp4=a // G2 z = G cx*cy
-    a=pyramid_hz c- a+pyramid_g c- a+tmp4 a&0x80 shape_v1x=a // +P = h + G0 + G2
-    a=pyramid_hz c+ a-pyramid_g c+ a-tmp4 a&0x80 shape_v1y=a // -P = h - G0 - G2
-    a=pyramid_hz c- a+pyramid_g c+ a-tmp4 a&0x80 shape_v2x=a // +Q = h + G0 - G2
-    a=pyramid_hz c+ a-pyramid_g c- a+tmp4 a&0x80 shape_v2y=a // -Q = h - G0 + G2
+    a=pyramid_hz c- a+shape_g0z c- a+tmp4 a&0x80 shape_v1x=a // +P = h + G0 + G2
+    a=pyramid_hz c+ a-shape_g0z c+ a-tmp4 a&0x80 shape_v1y=a // -P = h - G0 - G2
+    a=pyramid_hz c- a+shape_g0z c+ a-tmp4 a&0x80 shape_v2x=a // +Q = h + G0 - G2
+    a=pyramid_hz c+ a-shape_g0z c- a+tmp4 a&0x80 shape_v2y=a // -Q = h - G0 + G2
     a=ShapeSinG+33,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a // t2 = G cx*sy
     // x: G0 = G cy*cz, G2 = t2*cz + G sx*sz
     a=shape_cyg tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul pyramid_g=a

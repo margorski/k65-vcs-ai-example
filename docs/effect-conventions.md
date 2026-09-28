@@ -12,7 +12,7 @@ Numbers from `make report` (commit ae733a3) - re-run it, they change with every 
 |---|---|---|---|
 | core  | main, music player + song, util (fx switching), rainbow (disabled) | 2593 | 1503 (1170) |
 | bank1 | shapes: dot engine - `shape_live_points`, logos, point list, placement tables (FC00-FFC4) | 2730 | 1366 (1325) |
-| bank2 | shapes: rotation - `*_setup`, `shape_mul`, sin / square tables; plasma (disabled) | 2120 | 1976 (1946) |
+| bank2 | shapes: rotation - `*_setup`, `shape_mul` + shared `shape_angles(_g)` / `shape_col1`, sin / square tables; plasma (disabled) | 1971 | 2125 (2115) |
 | bank3 | eqsine (disabled) | 19 | 4077 |
 | bank4 | shapes: effect + kernel (`shapes`), `ShapeLum` (F400-F5FF) | 1909 | 2187 (1227) |
 | bank5 | shapes: sphere - animation (F100), `sphere_points`, placement tables (FC00-FFC4) | 3274 | 822 (533) |
@@ -30,9 +30,9 @@ is commented out in `main.k65` can stay in `files.lst` (it keeps compiling).
 - **Far calls are coarse: once per frame or per phase, never per point / per line.** A `far` call
   costs ~32 cycles (stub: `BIT` bank select, `JSR`, `BIT` back, `RTS`) and **4 bytes of stack**.
 - **Stack budget: F8-FF = 8 bytes**, and it is already exceeded on purpose: main -> `far shapes` ->
-  `far cube_setup` -> `call shape_mul` = 10 bytes (F6-F7 = ptrB, free at that moment). Adding a
-  far-call level inside a point loop / setup needs a check of what lives below F8 (`make stats`
-  prints the deepest SP).
+  `far pyramid_setup` -> `call shape_col1` -> `call shape_mul` = 12 bytes (F4-F7 = ptrA/ptrB, free
+  at that moment - the rotation keeps its scratch elsewhere). Adding a call level anywhere needs a
+  check of what lives below F4 (`make stats` prints the deepest SP).
 - **Avoid code shared by several banks.** An `inline` expanded in two banks needs its tables in both
   banks at the SAME fixed address (`var Name = 0x....` in the code, `data Name5 { address ... }` in
   each bank, kept linked by a `never { a=Name5 }` reference). The shapes do this only for the
@@ -59,7 +59,7 @@ is commented out in `main.k65` can stay in `files.lst` (it keeps compiling).
 | F8-FF | stack | always (8 bytes, see above) |
 | F0-F3 | song position (`songpos_seq/step/tick`, `seqbrk`) | global - only the player / main |
 | D0-D2 | effect switching (`fx_fade`, `fx_state`, `btn_prev`) | global - only util.k65 |
-| D3-D4, DC-DF | `mus_c0/c1`, `mus_v0/f0/v1/f1`: the player's last AUDC/AUDV/AUDF | written by the player every overscan; read-only for effects, except: an effect that does not read `mus_f0/f1` may use DD / DF as scratch between two player calls |
+| D3-D4, DC-DF | `mus_c0/c1`, `mus_v0/f0/v1/f1`: the player's last AUDC/AUDV/AUDF | written by the player every overscan; read-only for effects, except: after an effect has read them in a frame (or if it never reads them) it may use them as scratch until the next player call - the shapes use D3-D4 (rotation angles) after `shape_music`, and DD / DF |
 | E0-E3 | `tmp1..tmp4` | scratch, inside one routine / one phase |
 | E4-E7 | `ptrC`, `ptrD` | effect-owned (shapes keep vertices / the scale pointer there) |
 | F4-F7 | `ptrA`, `ptrB` | scratch - **the music player overwrites them in overscan** |

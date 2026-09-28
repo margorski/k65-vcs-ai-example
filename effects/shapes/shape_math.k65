@@ -24,3 +24,30 @@ bank bank2;
 func shape_mul {
     shape_mul_body
 }
+
+// Shared pieces of the *_setup routines (rotation bank, subroutines: an inline would be pasted
+// into every shape and save nothing).
+// Angles: out Y = the Y angle (2 x frame, wrapped to 0..131), X = shape_frame (X and Z angle),
+// shape_sy, shape_cy = sin / cos of the Y angle
+func shape_angles {
+    a=shape_frame a<< >={ c- a+[256-SHAPE_FRAMES] }
+    else { a?[SHAPE_FRAMES] >={ a-[SHAPE_FRAMES] } }
+    y=a a=ShapeSin,y shape_sy=a a=ShapeSin+33,y shape_cy=a
+    x=shape_frame
+}
+// ... + the 1/sqrt(3) scaled column 0 (cube, pyramid): shape_cyg = G cy, shape_g0z = z of G c0 = -G sy
+func shape_angles_g {
+    call shape_angles
+    a=ShapeSinG+33,y shape_cyg=a
+    a=ShapeSinG,y a<< a^0xFF c- a+1 shape_g0z=a
+}
+// Column 1 of R, unit scale (diamond tip, pyramid apex), coordinates x and y. In: X = frame,
+// shape_sy. Out: shape_v0x = x (double units, clamped, not converted yet), A = y (clamped),
+// shape_t = sx*sy/2.
+func shape_col1 {
+    a=ShapeSin,x tmp1=a a=shape_sy tmp2=a call shape_mul shape_half shape_t=a
+    tmp1=a a=ShapeSin+33,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSin+33,x tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp3=a a=tmp4 c+ a-tmp3 shape_ovf shape_v0x=a
+    a=shape_t tmp1=a a=ShapeSin,x tmp2=a call shape_mul tmp4=a
+    a=ShapeSin+33,x tmp1=a tmp2=a call shape_mul c- a+tmp4 shape_ovf
+}
